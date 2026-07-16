@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 72 72" role="img" aria-label="Orby">
+  <defs>
+    <linearGradient id="orby-gradient" x1="13" y1="10" x2="59" y2="62" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#67e8f9"/>
+      <stop offset="1" stop-color="#6366f1"/>
+    </linearGradient>
+  </defs>
+  <rect x="3" y="3" width="66" height="66" rx="20" fill="#09090b" stroke="#27272a"/>
+  <circle cx="35" cy="36" r="20" fill="url(#orby-gradient)"/>
+  <path d="M10 43c11 9 34 11 50-1 6-4 7-10 3-13" fill="none" stroke="#c4b5fd" stroke-width="4" stroke-linecap="round"/>
+  <circle cx="62" cy="28" r="6" fill="#a78bfa" stroke="#09090b" stroke-width="3"/>
+  <path d="m25 31 5 5-5 5m11 0h9" fill="none" stroke="#09090b" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

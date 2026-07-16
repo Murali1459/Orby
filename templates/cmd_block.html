@@ -1,0 +1,28 @@
+<div hx-swap-oob="beforeend:#output-area">
+<article class="cmd-block{{if .IsError}} cmd-block-error{{end}}"
+         data-output-format="{{.Format}}" data-tool="{{.ToolName}}" data-query="{{.Query}}"
+         data-state='{{.StateJSON}}' data-result-status="{{.ResultStatus}}">
+  <header class="cmd-header">
+    <time class="cmd-time">{{.Timestamp}}</time>
+    <span class="tool-badge {{.ToolClass}}">{{.ToolBadge}}</span>
+    <code class="cmd-query">{{.Query}}</code>
+    <div class="cmd-meta">
+      <span>{{.Profile}}</span>
+      <span>{{.DurationMS}}ms</span>
+      {{if .CountLabel}}<span class="cmd-count">{{.CountLabel}}</span>{{end}}
+      <span class="cmd-format">{{.FormatLabel}}</span>
+      <span class="cmd-status{{if .IsError}} is-error{{end}}">{{.StatusLabel}}</span>
+      <button type="button" class="icon-btn cmd-rerun" aria-label="Rerun query" title="Rerun query"><span class="cmd-action-icon rerun-icon" aria-hidden="true"></span></button>
+      <button type="button" class="icon-btn cmd-toggle" aria-label="Expand output" title="Expand output" aria-expanded="false"><span class="cmd-action-icon expand-icon" aria-hidden="true"></span></button>
+      <button type="button" class="icon-btn cmd-copy" aria-label="Copy output" title="Copy output"><span class="cmd-action-icon copy-icon" aria-hidden="true"></span></button>
+      <button type="button" class="icon-btn cmd-close" aria-label="Close output" title="Close output"><span class="cmd-action-icon close-icon" aria-hidden="true"></span></button>
+    </div>
+  </header>
+  <div class="cmd-output">
+    <div class="virtual-output" data-virtual-kind="{{.VirtualKind}}">
+      <script type="application/json" class="virtual-output-data">{{.OutputJSON}}</script>
+      <div class="virtual-scroll" role="region" aria-label="Query output" tabindex="0"></div>
+    </div>
+  </div>
+</article>
+</div>

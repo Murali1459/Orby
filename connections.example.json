@@ -1,0 +1,30 @@
+{
+  "profiles": [
+    {
+      "id": "local",
+      "label": "Local",
+      "connections": [
+        {
+          "id": "preset:aerospike-local",
+          "name": "aerospike-local",
+          "tool": "aerospike",
+          "host": "127.0.0.1",
+          "port": "3000",
+          "mode": "single",
+          "fields": {}
+        },
+        {
+          "id": "preset:redis-local",
+          "name": "redis-local",
+          "tool": "redis",
+          "host": "127.0.0.1",
+          "port": "6379",
+          "mode": "single",
+          "fields": {
+            "dbIndex": "0"
+          }
+        }
+      ]
+    }
+  ]
+}

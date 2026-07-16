@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Orby</title>
+  <link rel="icon" href="/static/icons/orby.svg" type="image/svg+xml">
+  <script>
+    try {
+      const layout = JSON.parse(localStorage.getItem("orby_workspace_layout_v1") || "null");
+      if (layout && typeof layout === "object") {
+        document.documentElement.classList.toggle("left-panel-collapsed", layout.leftOpen === false);
+        document.documentElement.classList.toggle("right-panel-collapsed", layout.rightOpen === false);
+      }
+    } catch { /* Storage is optional. */ }
+  </script>
+  <script src="https://unpkg.com/htmx.org@1.9.12"></script>
+  <link rel="stylesheet" href="/static/style.css?v=orby-controls-1">
+</head>
+<body>
+  <div class="operator-shell">
+    <header class="operator-topbar">
+      <a class="operator-brand" href="/" aria-label="Orby home">
+        <span class="brand-mark" aria-hidden="true"><img src="/static/icons/orby.svg" alt=""></span>
+        <span class="brand-copy"><strong>Orby</strong><small>query me maybe</small></span>
+      </a>
+      <button id="toggle-left-panel" type="button" class="top-connection-trigger panel-toggle" aria-label="Hide connections" aria-controls="connection-rail" aria-expanded="true" title="Hide connections">
+        <span class="panel-toggle-icon panel-left-icon" aria-hidden="true"></span>
+        <span id="top-active-connection">Connections</span>
+      </button>
+      <span class="top-context">Query console</span>
+      <div class="topbar-status">
+        <span class="read-only-status">[READ ONLY]</span>
+        <span id="top-connection-status" data-state="disconnected"><span class="status-dot"></span> <span id="top-connection-text">disconnected</span></span>
+      </div>
+      <button id="toggle-right-panel" type="button" class="panel-toggle top-settings-trigger" aria-label="Hide settings" aria-controls="connection-sidebar" aria-expanded="true" title="Hide settings"><span class="panel-toggle-icon panel-right-icon" aria-hidden="true"></span></button>
+    </header>
+
+    <main class="operator-main">
+      <button id="panel-backdrop" class="panel-backdrop" type="button" aria-label="Close sidebar" tabindex="-1"></button>
+      <aside id="connection-rail" class="connection-rail" aria-label="Saved connections">
+        <div id="left-sidebar-resizer" class="sidebar-resizer sidebar-resizer-left" role="separator" aria-label="Resize connections sidebar" aria-orientation="vertical" tabindex="0"></div>
+        <div class="rail-header">
+          <h2>Connections</h2>
+        </div>
+        <div class="rail-toolbar" aria-label="Connection actions">
+          <button id="new-connection" type="button" class="icon-button" aria-label="New connection" title="New connection"><span class="action-icon action-new" aria-hidden="true"></span></button>
+          <button id="save-connection" type="button" class="icon-button" aria-label="Save connection" title="Save connection"><span class="action-icon action-save" aria-hidden="true"></span></button>
+          <button id="duplicate-connection" type="button" class="icon-button" aria-label="Duplicate connection" title="Duplicate connection"><span class="action-icon action-duplicate" aria-hidden="true"></span></button>
+          <button id="delete-connection" type="button" class="icon-button" aria-label="Delete connection" title="Delete connection"><span class="action-icon action-delete" aria-hidden="true"></span></button>
+        </div>
+        <select id="connection-select" hidden aria-hidden="true" tabindex="-1"></select>
+        <div id="connection-list" class="connection-list"></div>
+      </aside>
+
+      <section class="terminal-pane" aria-label="Query console">
+        <div class="output-scroll" aria-live="polite">
+          <div class="output-toolbar"><button id="clear-outputs" type="button" aria-label="Clear outputs" hidden>Clear outputs</button></div>
+          <div id="empty-state" class="empty-state">
+            <p><strong>Ready for a read-only query.</strong></p>
+            <p>Choose a plugin, connection, and output, then run a command.</p>
+            <p class="empty-state-meta"><span id="empty-connection-name">New connection</span><span aria-hidden="true">·</span> Enter to run</p>
+          </div>
+          <div id="output-area"></div>
+        </div>
+
+        <div class="composer-stack">
+          <section id="plugin-action-panel" class="plugin-action-panel" aria-label="Plugin options" hidden></section>
+          <form id="query-form" class="operator-composer minimal-composer" hx-post="/query" hx-swap="none">
+            <label id="composer-tool-picker" class="tool-picker" title="AQL / Aerospike"><span>Plugin</span><img id="composer-tool-logo" src="/static/icons/aerospike.svg" alt=""><select id="composer-tool" name="tool" aria-label="Plugin"></select></label>
+            <div id="plugin-leading" class="plugin-leading" hidden></div>
+            <select id="composer-connection" hidden aria-hidden="true" tabindex="-1"></select>
+            <div id="plugin-composer" class="plugin-composer" aria-live="polite"></div>
+            <label id="composer-format-picker" class="format-picker" title="JSON"><span>Output</span><img id="composer-format-icon" src="/static/icons/braces.svg" alt=""><select id="composer-format" name="format" aria-label="Output format"></select></label>
+            <button id="run-query" type="submit">Run</button>
+            <input id="form-connection-id" name="connectionId" type="hidden">
+            <input id="form-lease-id" name="leaseId" type="hidden">
+            <input id="form-connection-name" name="connectionName" type="hidden">
+            <input id="form-host" name="host" type="hidden">
+            <input id="form-port" name="port" type="hidden">
+            <input id="form-mode" name="mode" type="hidden">
+          </form>
+        </div>
+      </section>
+
+      <aside id="connection-sidebar" class="connection-sidebar" aria-label="Connection settings">
+        <div id="right-sidebar-resizer" class="sidebar-resizer sidebar-resizer-right" role="separator" aria-label="Resize settings sidebar" aria-orientation="vertical" tabindex="0"></div>
+        <section class="sidebar-section">
+          <h2>Connection details <span id="connection-state" data-state="disconnected">disconnected</span></h2>
+          <label>Connection name<input id="connection-name" placeholder="Production cluster" required aria-required="true"></label>
+          <label>Plugin<select id="tool-select"></select></label>
+          <div class="connection-grid">
+            <label>Host<input id="host-input" placeholder="host or VM name" required aria-required="true"></label>
+            <label>Port<input id="port-input" placeholder="3000" required aria-required="true"></label>
+          </div>
+          <label>Mode<select id="mode-select"><option value="single">Single host</option><option value="cluster">Cluster seed hosts</option></select></label>
+          <details class="plugin-settings"><summary>Plugin-specific settings</summary><div id="plugin-fields"></div></details>
+          <div class="sidebar-actions">
+            <button id="disconnect-btn" type="button">Disconnect</button>
+            <button id="connect-btn" type="button">Connect</button>
+          </div>
+          <p id="conn-status-text" class="connection-message">Enter connection details</p>
+        </section>
+        <section class="sidebar-section history-section">
+          <h2>Command history <span>100 max</span></h2>
+          <label class="history-search-label"><span class="visually-hidden">Search command history</span><input id="history-search" type="search" placeholder="Search commands…" autocomplete="off"></label>
+          <div class="history-filters" aria-label="Filter command history">
+            <button type="button" class="history-filter is-active" data-history-tool="all">All</button>
+            <button type="button" class="history-filter" data-history-tool="aerospike">Aerospike</button>
+            <button type="button" class="history-filter" data-history-tool="redis">Redis</button>
+          </div>
+          <div id="history-panel" class="history-list"></div>
+        </section>
+      </aside>
+    </main>
+  </div>
+
+  <script>
+    window.PLUGINVM_TOOLS = {{.ToolsJSON}};
+    window.ORBY_PRESET_CONFIG = {{.PresetsJSON}};
+  </script>
+  <script type="module" src="/static/virtual_output.mjs?v=ux-a11y-2"></script>
+  <script type="module" src="/static/app.js?v=orby-controls-1"></script>
+</body>
+</html>
