@@ -38,7 +38,7 @@ func parseRedisAddresses(hosts, defaultPort string) ([]address, error) {
 		return nil, fmt.Errorf("valid Redis port is required")
 	}
 	addresses := []address{}
-	for _, raw := range strings.Split(hosts, ",") {
+	for raw := range strings.SplitSeq(hosts, ",") {
 		raw = strings.TrimSpace(raw)
 		if raw == "" {
 			continue

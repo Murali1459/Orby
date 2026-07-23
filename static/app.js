@@ -1,6 +1,6 @@
 import { refreshCustomSelects } from "./custom_select.mjs";
 import { clamp, escapeHTML, sameSet } from "./app_utils.mjs";
-import { createTableModel, createTextModel, scheduleVirtualRender, virtualHeight } from "./output_view.mjs";
+import { createTableModel, createTextModel, scheduleVirtualRender, virtualHeight, adjustViewportForScrollbar } from "./output_view.mjs";
 import { connectionGroups, mergeConnections } from "./preconfigured_connections.mjs";
 import { loadCollapsedProfiles, setProfileCollapsed } from "./profile_state.mjs";
 
@@ -877,6 +877,10 @@ function initializeVirtualOutputs() {
     root.setAttribute("data-virtual-ready", "true");
     model.viewport.style.height = `${virtualHeight(model.contentHeight, false)}px`;
     model.render();
+    requestAnimationFrame(() => {
+      adjustViewportForScrollbar(model, false);
+      scheduleVirtualRender(model);
+    });
   });
 }
 
@@ -885,6 +889,7 @@ function resizeVirtualOutput(block, expanded) {
   if (!model) return;
   model.viewport.style.height = `${virtualHeight(model.contentHeight, expanded)}px`;
   scheduleVirtualRender(model);
+  adjustViewportForScrollbar(model, expanded);
 }
 
 function clearOutputs() {
@@ -902,9 +907,20 @@ function removeOutput(block) {
 }
 
 async function copyOutput(block, button) {
-  try { await navigator.clipboard.writeText(outputModels.get(block)?.copyText() || block.querySelector(".cmd-output")?.innerText || ""); button.classList.add("is-confirmed"); }
-  catch { button.classList.add("is-error"); }
-  window.setTimeout(() => button.classList.remove("is-confirmed", "is-error"), 1200);
+  const text = outputModels.get(block)?.copyText() || block.querySelector(".cmd-output")?.innerText || "";
+  try {
+    await navigator.clipboard.writeText(text);
+  } catch {
+    const textarea = document.createElement("textarea");
+    textarea.value = text;
+    textarea.style.cssText = "position:fixed;left:-9999px;top:-9999px;opacity:0";
+    document.body.append(textarea);
+    textarea.select();
+    document.execCommand("copy");
+    textarea.remove();
+  }
+  button.classList.add("is-confirmed");
+  window.setTimeout(() => button.classList.remove("is-confirmed"), 1200);
 }
 
 async function rerunQuery(block) {

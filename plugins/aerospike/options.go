@@ -9,7 +9,7 @@ import (
 	"pluginvm/plugins"
 )
 
-func optionsWithClient(request plugins.Request, resource string, client clientAPI) ([]plugins.Option, error) {
+func optionsWithClient(request plugins.Request, resource string, client *nativeClient) ([]plugins.Option, error) {
 	namespace := strings.TrimSpace(request.Fields["namespace"])
 	command := resource
 	if resource == "bins" {
@@ -45,7 +45,7 @@ func parseOptions(resource, namespace string, values []string) []plugins.Option 
 		case "sets":
 			for _, record := range strings.FieldsFunc(raw, func(char rune) bool { return char == ';' || char == '\n' }) {
 				fields := map[string]string{}
-				for _, token := range strings.Split(record, ":") {
+				for token := range strings.SplitSeq(record, ":") {
 					key, value, ok := strings.Cut(token, "=")
 					if ok {
 						fields[strings.ToLower(strings.TrimSpace(key))] = strings.TrimSpace(value)
@@ -56,7 +56,7 @@ func parseOptions(resource, namespace string, values []string) []plugins.Option 
 				}
 			}
 		case "bins":
-			for _, item := range strings.Split(raw, ",") {
+			for item := range strings.SplitSeq(raw, ",") {
 				item = strings.TrimSpace(item)
 				if item != "" && !strings.Contains(item, "=") {
 					unique[item] = true
@@ -82,7 +82,7 @@ func parseSeeds(hosts, defaultPort string) ([]plugins.Address, error) {
 		return nil, fmt.Errorf("valid Aerospike port is required")
 	}
 	seeds := []plugins.Address{}
-	for _, raw := range strings.Split(hosts, ",") {
+	for raw := range strings.SplitSeq(hosts, ",") {
 		raw = strings.TrimSpace(raw)
 		if raw == "" {
 			continue

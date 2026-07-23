@@ -22,8 +22,8 @@ func (server *server) connectionStatus(writer http.ResponseWriter, request *http
 	prefix := session + ":"
 	active := []string{}
 	for _, lease := range server.connections.ActiveLeases() {
-		if strings.HasPrefix(lease, prefix) {
-			active = append(active, strings.TrimPrefix(lease, prefix))
+		if after, ok := strings.CutPrefix(lease, prefix); ok {
+			active = append(active, after)
 		}
 	}
 	writeJSON(writer, http.StatusOK, map[string]any{"active": active})

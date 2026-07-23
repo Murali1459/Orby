@@ -75,7 +75,7 @@ func blockFor(tool toolMetadata, result queryResult) blockData {
 		}
 		encoded, err := marshalPrettyJSON(value)
 		if err != nil {
-			encoded = []byte("null")
+			encoded = []byte(err.Error())
 		}
 		payload.Text = string(encoded)
 	}

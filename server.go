@@ -25,11 +25,7 @@ type server struct {
 }
 
 func newServer() (*server, error) {
-	pageTemplate, err := template.ParseFiles("templates/page.html")
-	if err != nil {
-		return nil, err
-	}
-	blockTemplate, err := template.ParseFiles("templates/cmd_block.html")
+	pageTemplate, blockTemplate, err := loadTemplates()
 	if err != nil {
 		return nil, err
 	}
@@ -51,7 +47,7 @@ func newServer() (*server, error) {
 	}
 	return &server{
 		pageTemplate: pageTemplate, blockTemplate: blockTemplate,
-		staticHandler: http.StripPrefix("/static/", http.FileServer(http.Dir("static"))),
+		staticHandler: staticHandler,
 		plugins:       registry, presets: presets, connections: newConnectionPool(10 * time.Minute),
 	}, nil
 }
