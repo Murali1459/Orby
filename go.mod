@@ -1,9 +1,9 @@
-module pluginvm
+module orby
 
 go 1.26
 
 require (
-	github.com/aerospike/aerospike-client-go/v8 v8.7.0
+	github.com/aerospike/aerospike-client-go/v8 v8.8.0
 	github.com/redis/go-redis/v9 v9.21.0
 )
 

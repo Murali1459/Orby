@@ -35,6 +35,7 @@ type ComposerElement struct {
 	DependsOn   string `json:"dependsOn,omitempty"`
 	Action      string `json:"action,omitempty"`
 	Grow        bool   `json:"grow,omitempty"`
+	Decorative  bool   `json:"decorative,omitempty"`
 }
 
 type ExpressionType struct {
@@ -45,8 +46,7 @@ type ExpressionType struct {
 }
 
 type ExpressionEditor struct {
-	BinOptions string           `json:"binOptions"`
-	Types      []ExpressionType `json:"types"`
+	Types []ExpressionType `json:"types"`
 }
 
 type Composer struct {
@@ -59,16 +59,23 @@ type FilterOperator struct {
 	Label string `json:"label"`
 }
 
+// Command is one autocomplete entry a plugin offers: a keyword and its arg placeholder hints.
+type Command struct {
+	Name string   `json:"name"`
+	Args []string `json:"args"`
+}
+
 type Metadata struct {
-	Name          string   `json:"name"`
-	Label         string   `json:"label"`
-	Badge         string   `json:"badge"`
-	ColorClass    string   `json:"colorClass"`
-	Icon          string   `json:"icon"`
-	DefaultFormat string   `json:"defaultFormat"`
-	Formats       []string `json:"formats"`
-	Fields        []Field  `json:"fields"`
-	Composer      Composer `json:"composer"`
+	Name          string    `json:"name"`
+	Label         string    `json:"label"`
+	Badge         string    `json:"badge"`
+	ColorClass    string    `json:"colorClass"`
+	Icon          string    `json:"icon"`
+	DefaultFormat string    `json:"defaultFormat"`
+	Formats       []string  `json:"formats"`
+	Fields        []Field   `json:"fields"`
+	Composer      Composer  `json:"composer"`
+	Commands      []Command `json:"commands,omitempty"`
 }
 
 type Option struct {
@@ -88,6 +95,26 @@ type Request struct {
 	Fields         map[string]string
 }
 
+type BrowseKey struct {
+	Name string `json:"name"`
+	Type string `json:"type"`
+	TTL  int64  `json:"ttl,omitempty"` // seconds; omitted when persistent (-1) or vanished (-2)
+}
+
+type BrowseGroup struct {
+	Prefix string      `json:"prefix"`
+	Keys   []BrowseKey `json:"keys"`
+	Total  int         `json:"total"` // scanned keys in this group; may exceed len(Keys)
+}
+
+type BrowseView struct {
+	Pattern string        `json:"pattern"`
+	Groups  []BrowseGroup `json:"groups"`
+	Scanned int           `json:"scanned"`
+	Limited bool          `json:"limited"`
+	Cluster bool          `json:"cluster,omitempty"`
+}
+
 type Result struct {
 	Tool         string
 	Query        string
@@ -101,9 +128,11 @@ type Result struct {
 	Error        string
 	RowCount     int
 	HasCount     bool
+	CountUnit    string
 	DurationMS   int64
 	Succeeded    bool
 	State        map[string]string
+	Browse       *BrowseView `json:"browse,omitempty"`
 }
 
 type Connection interface {
@@ -144,6 +173,58 @@ func ParseAddress(raw string, defaultPort int) (Address, error) {
 	return Address{Host: strings.Trim(host, "[]"), Port: port}, nil
 }
 
+func ParseSeeds(hosts, defaultPort, what string) ([]Address, error) {
+	port, err := strconv.Atoi(strings.TrimSpace(defaultPort))
+	if err != nil || port < 1 || port > 65535 {
+		return nil, fmt.Errorf("valid %s port is required", what)
+	}
+	seeds := []Address{}
+	for raw := range strings.SplitSeq(hosts, ",") {
+		raw = strings.TrimSpace(raw)
+		if raw == "" {
+			continue
+		}
+		seed, err := ParseAddress(raw, port)
+		if err != nil {
+			return nil, fmt.Errorf("invalid %s seed", what)
+		}
+		seeds = append(seeds, seed)
+	}
+	if len(seeds) == 0 {
+		return nil, fmt.Errorf("%s host is required", what)
+	}
+	return seeds, nil
+}
+
+func WalkJSON(value any, leaf func(any) any) any {
+	switch value := value.(type) {
+	case map[string]any:
+		out := make(map[string]any, len(value))
+		for key, item := range value {
+			out[key] = WalkJSON(item, leaf)
+		}
+		return out
+	case map[any]any:
+		// Aerospike's binary unpacker returns CDT map bins as map[any]any; encoding/json never does.
+		out := make(map[string]any, len(value))
+		for key, item := range value {
+			out[fmt.Sprint(key)] = WalkJSON(item, leaf)
+		}
+		return out
+	case []any:
+		out := make([]any, len(value))
+		for index, item := range value {
+			out[index] = WalkJSON(item, leaf)
+		}
+		return out
+	default:
+		if leaf == nil {
+			return value
+		}
+		return leaf(value)
+	}
+}
+
 func ProfileName(name string) string {
 	if name = strings.TrimSpace(name); name != "" {
 		return name
@@ -151,10 +232,13 @@ func ProfileName(name string) string {
 	return "manual"
 }
 
-func MarshalJSON(value any) ([]byte, error) {
+func MarshalJSON(value any, indent string) ([]byte, error) {
 	var output bytes.Buffer
 	encoder := json.NewEncoder(&output)
 	encoder.SetEscapeHTML(false)
+	if indent != "" {
+		encoder.SetIndent("", indent)
+	}
 	if err := encoder.Encode(value); err != nil {
 		return nil, err
 	}

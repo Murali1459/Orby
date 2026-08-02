@@ -29,8 +29,8 @@ const (
 )
 
 func TestDockerLargeOutputs(t *testing.T) {
-	redisHost, redisPort := envOr("PLUGINVM_REDIS_HOST", "127.0.0.1"), envOr("PLUGINVM_REDIS_PORT", "16379")
-	aerospikeHost, aerospikePortText := envOr("PLUGINVM_AEROSPIKE_HOST", "127.0.0.1"), envOr("PLUGINVM_AEROSPIKE_PORT", "13000")
+	redisHost, redisPort := envOr("ORBY_REDIS_HOST", "127.0.0.1"), envOr("ORBY_REDIS_PORT", "16379")
+	aerospikeHost, aerospikePortText := envOr("ORBY_AEROSPIKE_HOST", "127.0.0.1"), envOr("ORBY_AEROSPIKE_PORT", "13000")
 	aerospikePort, err := strconv.Atoi(aerospikePortText)
 	if err != nil {
 		t.Fatal(err)
@@ -72,8 +72,9 @@ func TestDockerLargeOutputs(t *testing.T) {
 	aerospikeBase := url.Values{
 		"tool": {"aerospike"}, "host": {aerospikeHost}, "port": {aerospikePortText}, "mode": {"cluster"},
 		"connectionName": {"Large Docker Aerospike"}, "namespace": {"test"}, "set": {"large_records"},
+		"limit": {"-1"}, "metadata": {"true"},
 	}
-	for _, format := range []string{"raw", "json", "table"} {
+	for _, format := range []string{"json", "table"} {
 		t.Run("aerospike scan "+format, func(t *testing.T) {
 			values := cloneValues(aerospikeBase)
 			values.Set("format", format)
@@ -87,7 +88,7 @@ func TestDockerLargeOutputs(t *testing.T) {
 }
 
 func TestDockerRedisReadTimeout(t *testing.T) {
-	host, port := envOr("PLUGINVM_DELAYED_REDIS_HOST", "127.0.0.1"), envOr("PLUGINVM_DELAYED_REDIS_PORT", "18479")
+	host, port := envOr("ORBY_DELAYED_REDIS_HOST", "127.0.0.1"), envOr("ORBY_DELAYED_REDIS_PORT", "18479")
 	app := startDockerTestServer(t)
 	started := time.Now()
 	body, status := postQuery(t, app.URL, url.Values{
@@ -224,7 +225,7 @@ func seedLargeAerospike(t *testing.T, host string, port int) {
 }
 
 func TestDockerRedisFunctionality(t *testing.T) {
-	host, port := envOr("PLUGINVM_REDIS_HOST", "127.0.0.1"), envOr("PLUGINVM_REDIS_PORT", "16379")
+	host, port := envOr("ORBY_REDIS_HOST", "127.0.0.1"), envOr("ORBY_REDIS_PORT", "16379")
 	seedRedis(t, host, port)
 	app := startDockerTestServer(t)
 
@@ -235,13 +236,13 @@ func TestDockerRedisFunctionality(t *testing.T) {
 		contains, excludes  []string
 		status              string
 	}{
-		{name: "raw string", query: "GET greeting", format: "raw", contains: []string{">hello<"}, status: "success"},
-		{name: "quoted key", query: `GET "spaced key"`, format: "raw", contains: []string{">quoted value<"}, status: "success"},
-		{name: "stored JSON", query: "GET campaign:1", format: "json", contains: []string{`class="json-out"`, "campaign_id", "CMP-1", "placement_bids"}, status: "success"},
-		{name: "stored JSON table", query: "GET campaign:1", format: "table", contains: []string{"campaign_id", "placement_bids", "CMP-1", `[{&#34;cpc&#34;:205,&#34;placement&#34;:&#34;SEARCH&#34;}]`}, status: "success"},
+		{name: "raw string", query: "GET greeting", format: "raw", contains: []string{`class="virtual-output"`, `data-virtual-kind="raw"`, `"text":"hello"`}, status: "success"},
+		{name: "quoted key", query: `GET "spaced key"`, format: "raw", contains: []string{`data-virtual-kind="raw"`, `"text":"quoted value"`}, status: "success"},
+		{name: "stored JSON", query: "GET campaign:1", format: "json", contains: []string{`class="virtual-output"`, `data-virtual-kind="json"`, "campaign_id", "CMP-1", "placement_bids"}, status: "success"},
+		{name: "stored JSON table", query: "GET campaign:1", format: "table", contains: []string{`data-virtual-kind="table"`, `"heads":["campaign_id","placement_bids"]`, "CMP-1", `\"placement\":\"SEARCH\"`}, status: "success"},
 		{name: "multiple values", query: "MGET greeting missing", format: "json", contains: []string{"hello", "null"}, status: "success"},
 		{name: "hash", query: "HGETALL profile:1", format: "raw", contains: []string{"name", "Ada", "age", "36"}, status: "success"},
-		{name: "list", query: "LRANGE queue 0 -1", format: "raw", contains: []string{"first\nsecond"}, status: "success"},
+		{name: "list", query: "LRANGE queue 0 -1", format: "raw", contains: []string{`data-virtual-kind="raw"`, `"text":"first\nsecond"`}, status: "success"},
 		{name: "set", query: "SMEMBERS tags", format: "json", contains: []string{"alpha", "beta"}, status: "success"},
 		{name: "sorted set", query: "ZRANGE scores 0 -1 WITHSCORES", format: "table", contains: []string{"Ada", "Grace"}, status: "success"},
 		{name: "stream", query: "XRANGE events - +", format: "json", contains: []string{"created", "CMP-1"}, status: "success"},
@@ -309,7 +310,7 @@ func TestDockerRedisClusterFunctionality(t *testing.T) {
 }
 
 func TestDockerAerospikeFunctionality(t *testing.T) {
-	host, portText := envOr("PLUGINVM_AEROSPIKE_HOST", "127.0.0.1"), envOr("PLUGINVM_AEROSPIKE_PORT", "13000")
+	host, portText := envOr("ORBY_AEROSPIKE_HOST", "127.0.0.1"), envOr("ORBY_AEROSPIKE_PORT", "13000")
 	port, err := strconv.Atoi(portText)
 	if err != nil {
 		t.Fatal(err)
@@ -324,9 +325,15 @@ func TestDockerAerospikeFunctionality(t *testing.T) {
 	t.Run("set options", func(t *testing.T) {
 		assertOptions(t, app.URL, "/plugin-options?tool=aerospike&resource=sets&host="+host+"&port="+portText+"&namespace=test", "users")
 	})
-	t.Run("bin options", func(t *testing.T) {
-		for _, bin := range []string{"name", "age", "active", "score"} {
-			assertOptions(t, app.URL, "/plugin-options?tool=aerospike&resource=bins&host="+host+"&port="+portText+"&namespace=test", bin)
+	t.Run("unsupported option resource", func(t *testing.T) {
+		response, err := http.Get(app.URL + "/plugin-options?tool=aerospike&resource=bins&host=" + host + "&port=" + portText + "&namespace=test")
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer response.Body.Close()
+		body, _ := io.ReadAll(response.Body)
+		if response.StatusCode != http.StatusBadRequest || !strings.Contains(string(body), "unsupported Aerospike option resource") {
+			t.Fatalf("bins options=%d %s", response.StatusCode, body)
 		}
 	})
 
@@ -339,7 +346,7 @@ func TestDockerAerospikeFunctionality(t *testing.T) {
 		values := cloneValues(base)
 		values.Set("format", "json")
 		body, status := postQuery(t, app.URL, values)
-		if status != "success" || !containsAll(body, `class="json-out"`, "Ada", "Grace", "Linus", "_key") {
+		if status != "success" || !containsAll(body, `class="virtual-output"`, `data-virtual-kind="json"`, "Ada", "Grace", "Linus") {
 			t.Fatalf("status=%q body=%s", status, body)
 		}
 	})
@@ -359,7 +366,7 @@ func TestDockerAerospikeFunctionality(t *testing.T) {
 		values.Set("format", "json")
 		values.Set("primaryKey", "missing")
 		body, status := postQuery(t, app.URL, values)
-		if status != "success" || !strings.Contains(body, `<pre class="json-out">[]</pre>`) {
+		if status != "error" || !strings.Contains(body, `record not found in test.users for primary key \"missing\"`) {
 			t.Fatalf("status=%q body=%s", status, body)
 		}
 	})
@@ -384,12 +391,12 @@ func TestDockerAerospikeFunctionality(t *testing.T) {
 		}
 	})
 
-	t.Run("raw", func(t *testing.T) {
+	t.Run("primary key JSON", func(t *testing.T) {
 		values := cloneValues(base)
-		values.Set("format", "raw")
+		values.Set("format", "json")
 		values.Set("primaryKey", "u2")
 		body, status := postQuery(t, app.URL, values)
-		if status != "success" || !strings.Contains(body, `&#34;name&#34;:&#34;Grace&#34;`) || strings.Contains(body, "Ada") {
+		if status != "success" || !strings.Contains(body, `\"name\": \"Grace\"`) || strings.Contains(body, "Ada") {
 			t.Fatalf("status=%q body=%s", status, body)
 		}
 	})
@@ -506,7 +513,7 @@ func postQuery(t *testing.T, baseURL string, values url.Values) (string, string)
 	}
 	defer response.Body.Close()
 	body, _ := io.ReadAll(response.Body)
-	return string(body), response.Header.Get("X-PluginVM-Result")
+	return string(body), response.Header.Get("X-Orby-Result")
 }
 
 func cloneValues(source url.Values) url.Values {
@@ -532,18 +539,3 @@ func envOr(name, fallback string) string {
 	}
 	return fallback
 }
-
-func waitFor(t *testing.T, description string, check func() error) {
-	t.Helper()
-	deadline := time.Now().Add(15 * time.Second)
-	for {
-		if err := check(); err == nil {
-			return
-		} else if time.Now().After(deadline) {
-			t.Fatalf("%s: %v", description, err)
-		}
-		time.Sleep(250 * time.Millisecond)
-	}
-}
-
-func dockerAddress(host, port string) string { return fmt.Sprintf("%s:%s", host, port) }

@@ -3,10 +3,11 @@ package redis
 import (
 	"errors"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 
-	"pluginvm/plugins"
+	"orby/plugins"
 )
 
 type fakeRedis struct {
@@ -15,6 +16,11 @@ type fakeRedis struct {
 	err    error
 	pings  int
 	closed bool
+
+	scanPages  [][]string // keys per Scan page, in order
+	scanCalls  int
+	typesByKey map[string]string
+	ttlsByKey  map[string]int64
 }
 
 func runRedis(request queryRequest) (queryResult, error) {
@@ -32,11 +38,48 @@ func runRedis(request queryRequest) (queryResult, error) {
 func TestMetadataProvidesComposer(t *testing.T) {
 	metadata := Plugin{}.Metadata()
 	want := []plugins.ComposerElement{
-		{Kind: "literal", Text: "❯"},
+		{Kind: "literal", Text: "❯", Decorative: true},
 		{Kind: "input", Name: "query", Placeholder: "Enter Redis command", Grow: true},
 	}
 	if !reflect.DeepEqual(metadata.Composer.Elements, want) {
 		t.Fatalf("composer = %#v", metadata.Composer)
+	}
+	names := make([]string, len(metadata.Commands))
+	for index, command := range metadata.Commands {
+		names[index] = command.Name
+	}
+	if !reflect.DeepEqual(names, redisCommandNames()) {
+		t.Fatalf("metadata commands = %#v, want %#v", names, redisCommandNames())
+	}
+}
+
+func redisCommandNames() []string {
+	names := make([]string, len(redisCommands))
+	for index, command := range redisCommands {
+		names[index] = command.Name
+	}
+	return names
+}
+
+func TestMetadataCommandsMatchAllowList(t *testing.T) {
+	commands := Plugin{}.Metadata().Commands
+	allowed := redisReadCommands
+	for _, command := range commands {
+		if !allowed[command.Name] {
+			t.Fatalf("metadata command %q is not in the execution allow-list", command.Name)
+		}
+	}
+	for name := range allowed {
+		matched := false
+		for _, command := range commands {
+			if command.Name == name {
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			t.Fatalf("allow-listed command %q has no metadata entry", name)
+		}
 	}
 }
 
@@ -46,6 +89,61 @@ func (client *fakeRedis) Execute(tokens []string) (any, error) {
 }
 func (client *fakeRedis) Ping() error  { client.pings++; return client.err }
 func (client *fakeRedis) Close() error { client.closed = true; return nil }
+
+func (client *fakeRedis) Scan(cursor string, pattern string, count int64) ([]string, string, error) {
+	client.calls = append(client.calls, "SCAN "+cursor+" MATCH "+pattern+" COUNT "+strconv.FormatInt(count, 10))
+	if client.err != nil {
+		return nil, "", client.err
+	}
+	page := client.scanCalls
+	if page >= len(client.scanPages) {
+		return nil, "0", nil
+	}
+	client.scanCalls++
+	next := "0"
+	if page+1 < len(client.scanPages) {
+		next = strconv.Itoa(page + 1)
+	}
+	return client.scanPages[page], next, nil
+}
+
+func (client *fakeRedis) ScanCluster(pattern string, count int64, limit int) ([]string, bool, error) {
+	client.calls = append(client.calls, "CLUSTER SCAN MATCH "+pattern+" COUNT "+strconv.FormatInt(count, 10))
+	if client.err != nil {
+		return nil, false, client.err
+	}
+	seen := map[string]struct{}{}
+	keys := []string{}
+	for _, page := range client.scanPages { // each page stands in for one master's page
+		for _, key := range page {
+			if _, exists := seen[key]; exists {
+				continue
+			}
+			seen[key] = struct{}{}
+			keys = append(keys, key)
+			if len(keys) >= limit {
+				return keys, true, nil
+			}
+		}
+	}
+	return keys, false, nil
+}
+
+func (client *fakeRedis) Types(keys []string) ([]string, error) {
+	types := make([]string, len(keys))
+	for index, key := range keys {
+		types[index] = client.typesByKey[key]
+	}
+	return types, nil
+}
+
+func (client *fakeRedis) TTLs(keys []string) ([]int64, error) {
+	ttls := make([]int64, len(keys))
+	for index, key := range keys {
+		ttls[index] = client.ttlsByKey[key]
+	}
+	return ttls, nil
+}
 
 func TestPluginConnectionReusesRedisClientUntilClosed(t *testing.T) {
 	original := redisClientFactory
@@ -95,7 +193,7 @@ func TestRunRedisPassesClusterCommandsToClient(t *testing.T) {
 	defer func() { redisClientFactory = original }()
 	client := &fakeRedis{value: []any{}}
 	redisClientFactory = func(bool, []address, int) (redisClient, error) { return client, nil }
-	if _, err := runRedis(queryRequest{Query: "SCAN 0", Mode: "cluster", Host: "node", Port: "6379"}); err != nil || !reflect.DeepEqual(client.calls, []string{"SCAN 0"}) {
+	if _, err := runRedis(queryRequest{Query: "GET key", Mode: "cluster", Host: "node", Port: "6379"}); err != nil || !reflect.DeepEqual(client.calls, []string{"GET key"}) {
 		t.Fatalf("calls=%#v err=%v", client.calls, err)
 	}
 }
@@ -148,7 +246,7 @@ func TestRunRedisCountsCollectionsButNotScalars(t *testing.T) {
 	redisClientFactory = func(bool, []address, int) (redisClient, error) { return client, nil }
 
 	client.value = []any{[]byte("one"), []byte("two")}
-	result, err := runRedis(queryRequest{Query: "KEYS *", Format: "raw", Host: "node", Port: "6379"})
+	result, err := runRedis(queryRequest{Query: "SMEMBERS people", Format: "raw", Host: "node", Port: "6379"})
 	if err != nil || !result.HasCount || result.RowCount != 2 {
 		t.Fatalf("collection result=%#v err=%v", result, err)
 	}
@@ -197,6 +295,19 @@ func TestRunRedisFormatsRawLikeRedisCLI(t *testing.T) {
 	result, err := runRedis(queryRequest{Query: "MGET first second", Format: "raw", Host: "node", Port: "6379"})
 	if err != nil || !result.IsRaw || result.Raw != "first\nsecond\n3" {
 		t.Fatalf("result=%#v err=%v", result, err)
+	}
+}
+
+func TestRunRedisRejectsScanCommands(t *testing.T) {
+	original := redisClientFactory
+	defer func() { redisClientFactory = original }()
+	called := false
+	redisClientFactory = func(bool, []address, int) (redisClient, error) { called = true; return &fakeRedis{}, nil }
+	for _, query := range []string{"SCAN 0", "KEYS *", "SSCAN people 0", "HSCAN people 0", "ZSCAN people 0"} {
+		_, err := runRedis(queryRequest{Query: query, Host: "node", Port: "6379"})
+		if err == nil || called {
+			t.Fatalf("scan command %q reached client", query)
+		}
 	}
 }
 

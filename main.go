@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"time"
 )
 
 func main() {
@@ -14,17 +15,26 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	server, err := newServer()
+	app, err := newServer()
 	if err != nil {
 		log.Fatal(err)
 	}
+	defer app.Close()
 	host := os.Getenv("HOST")
 	if host == "" {
 		host = "0.0.0.0"
 	}
 	address := net.JoinHostPort(host, strconv.Itoa(port))
+	server := &http.Server{
+		Addr:              address,
+		Handler:           app,
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      60 * time.Second,
+		IdleTimeout:       2 * time.Minute,
+	}
 	fmt.Printf("orby listening on http://%s\n", address)
-	err = http.ListenAndServe(address, server)
-	server.Close()
-	log.Fatal(err)
+	if err := server.ListenAndServe(); err != nil {
+		log.Fatal(err)
+	}
 }

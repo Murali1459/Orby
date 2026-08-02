@@ -1,13 +1,14 @@
 package aerospike
 
 import (
+	"errors"
 	"fmt"
 	"maps"
 	"strings"
 	"time"
 
 	as "github.com/aerospike/aerospike-client-go/v8"
-	"pluginvm/plugins"
+	"orby/plugins"
 )
 
 type Plugin struct{}
@@ -41,7 +42,6 @@ func (Plugin) Metadata() plugins.Metadata {
 				{Kind: "action", Name: "expression", Action: "expression"},
 			},
 			Expression: &plugins.ExpressionEditor{
-				BinOptions: "bins",
 				Types: []plugins.ExpressionType{
 					{Value: "string", Label: "string", InputType: "text", Operators: comparisons},
 					{Value: "integer", Label: "integer", InputType: "number", Operators: comparisons},
@@ -54,7 +54,7 @@ func (Plugin) Metadata() plugins.Metadata {
 }
 
 func (Plugin) Connect(request plugins.Request) (plugins.Connection, error) {
-	seeds, err := parseSeeds(request.Host, request.Port)
+	seeds, err := plugins.ParseSeeds(request.Host, request.Port, "Aerospike")
 	if err != nil {
 		return nil, err
 	}
@@ -62,17 +62,21 @@ func (Plugin) Connect(request plugins.Request) (plugins.Connection, error) {
 	if err != nil {
 		return nil, fmt.Errorf("Aerospike connection failed: %v", err)
 	}
-	return &connection{client: *client}, nil
+	if !client.IsConnected() {
+		client.Close()
+		return nil, fmt.Errorf("Aerospike connection failed: no nodes reachable")
+	}
+	return &connection{client: client}, nil
 }
 
-type connection struct{ client nativeClient }
+type connection struct{ client *nativeClient }
 
 func (connection *connection) Run(request plugins.Request) (plugins.Result, error) {
-	return runWithClient(request, &connection.client)
+	return runWithClient(request, connection.client)
 }
 
 func (connection *connection) Options(request plugins.Request, resource string) ([]plugins.Option, error) {
-	return optionsWithClient(request, resource, &connection.client)
+	return optionsWithClient(request, resource, connection.client)
 }
 
 func (connection *connection) Close() error {
@@ -111,7 +115,11 @@ func runWithClient(request plugins.Request, client *nativeClient) (plugins.Resul
 	} else {
 		record, getErr := client.Get(command.Namespace, command.Set, command.PrimaryKey, command.Filter)
 		if getErr != nil {
-			err = getErr
+			if errors.Is(getErr, as.ErrKeyNotFound) {
+				err = fmt.Errorf("record not found in %s.%s for primary key %q", command.Namespace, command.Set, command.PrimaryKey)
+			} else {
+				err = getErr
+			}
 		} else if record != nil {
 			records = []*as.Record{record}
 		}
@@ -121,15 +129,15 @@ func runWithClient(request plugins.Request, client *nativeClient) (plugins.Resul
 	}
 	rows := make([]map[string]any, 0, len(records))
 	for _, record := range records {
-		rows = append(rows, sanitizeJSON(recordToRow(record, command.Metadata)).(map[string]any))
+		rows = append(rows, plugins.WalkJSON(recordToRow(record, command.Metadata), nil).(map[string]any))
 	}
 	state := map[string]string{}
 	maps.Copy(state, request.Fields)
 	result := plugins.Result{
 		Tool: "aerospike", Query: summary(command), Format: format,
 		Profile: plugins.ProfileName(request.ConnectionName), Rows: rows,
-		RowCount: len(rows), HasCount: true, DurationMS: time.Since(started).Milliseconds(),
-		Succeeded: true, State: state,
+		RowCount: len(rows), HasCount: true, CountUnit: "record",
+		DurationMS: time.Since(started).Milliseconds(), Succeeded: true, State: state,
 	}
 	return result, nil
 }
@@ -163,29 +171,4 @@ func recordToRow(record *as.Record, includeMetadata bool) map[string]any {
 		row["expiration"] = int(record.Expiration)
 	}
 	return row
-}
-
-func sanitizeJSON(v any) any {
-	switch value := v.(type) {
-	case map[any]any:
-		out := make(map[string]any, len(value))
-		for k, v := range value {
-			out[fmt.Sprint(k)] = sanitizeJSON(v)
-		}
-		return out
-	case map[string]any:
-		out := make(map[string]any, len(value))
-		for k, v := range value {
-			out[k] = sanitizeJSON(v)
-		}
-		return out
-	case []any:
-		out := make([]any, len(value))
-		for i, v := range value {
-			out[i] = sanitizeJSON(v)
-		}
-		return out
-	default:
-		return v
-	}
 }

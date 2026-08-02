@@ -1,3 +1,5 @@
+import { escapeHTML } from "./app_utils.mjs";
+
 export function visibleRange(count, itemHeight, scrollTop, viewportHeight, overscan = 8) {
   if (count <= 0) return { start: 0, end: 0 };
   const first = Math.floor(Math.max(0, scrollTop) / itemHeight);
@@ -6,10 +8,6 @@ export function visibleRange(count, itemHeight, scrollTop, viewportHeight, overs
     start: Math.max(0, first - overscan),
     end: Math.min(count, first + visible + overscan),
   };
-}
-
-export function fitHeight(contentHeight, limit) {
-  return Math.min(Math.max(0, contentHeight), Math.max(0, limit));
 }
 
 export function normalizePayload(payload) {
@@ -38,4 +36,14 @@ export function previewText(value, maxLength = 240) {
   return text.length > maxLength ? `${text.slice(0, maxLength)}… (${text.length} chars)` : text;
 }
 
-globalThis.PluginVMVirtual = { chunkText, fitHeight, normalizePayload, previewText, tableText, visibleRange };
+const jsonTokenRe = /("(?:[^"\\]|\\.)*")\s*(:)?|(-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)\b|(true|false|null)\b|([{}[\],:])/g;
+
+export function highlightJson(text) {
+  return String(text ?? "").replace(jsonTokenRe, (match, str, colon, num, bool, punct) => {
+    if (str) return `<span class="js-str">${escapeHTML(str)}</span>${colon ? ":" : ""}`;
+    if (num) return `<span class="js-num">${match}</span>`;
+    if (bool) return `<span class="js-bool">${match}</span>`;
+    if (punct) return `<span class="js-punct">${match}</span>`;
+    return escapeHTML(match);
+  });
+}

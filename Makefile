@@ -1,6 +1,5 @@
 APP      := orby
-VERSION  ?= 1.0.0
-LDFLAGS  := -s -w -X main.version=$(VERSION)
+LDFLAGS  := -s -w
 BUILD    := dist
 
 .PHONY: all clean linux-amd64 linux-arm64

@@ -7,7 +7,7 @@ import (
 	"net/http"
 	"strings"
 
-	pluginapi "pluginvm/plugins"
+	pluginapi "orby/plugins"
 )
 
 func (server *server) connectionStatus(writer http.ResponseWriter, request *http.Request) {
@@ -41,12 +41,12 @@ func (server *server) pluginOptions(writer http.ResponseWriter, request *http.Re
 	}
 	values := request.URL.Query()
 	query := requestFromValues(values)
-	key, err := connectionKey(query.Host, query.Port, query.Mode)
+	key, err := connectionKey(toolName, query.Host, query.Port)
 	if err != nil {
 		http.Error(writer, err.Error(), http.StatusBadRequest)
 		return
 	}
-	connection, release, err := server.acquireConnection(key, toolName, query, plugin)
+	connection, release, err := server.acquireConnection(key, query, plugin)
 	if err != nil {
 		status := http.StatusBadRequest
 		if errors.Is(err, errConnectionNotConnected) {
@@ -72,12 +72,12 @@ func (server *server) pluginOptions(writer http.ResponseWriter, request *http.Re
 	}{Options: options})
 }
 
-func (server *server) acquireConnection(key, toolName string, request queryRequest, plugin pluginapi.Plugin) (pluginapi.Connection, func(), error) {
+func (server *server) acquireConnection(key string, request queryRequest, plugin pluginapi.Plugin) (pluginapi.Connection, func(), error) {
 	lease := requestLease(request)
 	if strings.HasPrefix(request.ConnectionID, "preset:") {
-		return server.connections.AcquireExisting(key, toolName, lease)
+		return server.connections.AcquireExisting(key, lease)
 	}
-	return server.connections.Acquire(key, toolName, lease, func() (pluginapi.Connection, error) {
+	return server.connections.Acquire(key, lease, func() (pluginapi.Connection, error) {
 		return plugin.Connect(request)
 	})
 }
@@ -97,12 +97,12 @@ func (server *server) connect(writer http.ResponseWriter, request *http.Request)
 		return
 	}
 	query := requestFromValues(request.Form)
-	key, err := connectionKey(query.Host, query.Port, query.Mode)
+	key, err := connectionKey(toolName, query.Host, query.Port)
 	if err != nil {
 		writeJSON(writer, http.StatusBadRequest, map[string]any{"reachable": false, "message": err.Error()})
 		return
 	}
-	if err := server.connections.Connect(key, toolName, requestLease(query), func() (pluginapi.Connection, error) {
+	if err := server.connections.Connect(key, requestLease(query), func() (pluginapi.Connection, error) {
 		return plugin.Connect(query)
 	}); err != nil {
 		writeJSON(writer, http.StatusBadGateway, map[string]any{"reachable": false, "message": err.Error()})
@@ -119,7 +119,8 @@ func (server *server) disconnect(writer http.ResponseWriter, request *http.Reque
 		writeJSON(writer, http.StatusBadRequest, map[string]any{"disconnected": false, "message": err.Error()})
 		return
 	}
-	key, err := connectionKey(request.Form.Get("host"), request.Form.Get("port"), request.Form.Get("mode"))
+	toolName := request.Form.Get("tool")
+	key, err := connectionKey(toolName, request.Form.Get("host"), request.Form.Get("port"))
 	if err != nil {
 		writeJSON(writer, http.StatusBadRequest, map[string]any{"disconnected": false, "message": err.Error()})
 		return

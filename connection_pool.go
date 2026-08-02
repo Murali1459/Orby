@@ -2,12 +2,11 @@ package main
 
 import (
 	"errors"
-	"fmt"
 	"sort"
 	"sync"
 	"time"
 
-	pluginapi "pluginvm/plugins"
+	pluginapi "orby/plugins"
 )
 
 func (pool *connectionPool) ActiveLeases() []string {
@@ -30,13 +29,11 @@ func (pool *connectionPool) ActiveLeases() []string {
 }
 
 var (
-	errConnectionServiceMismatch = errors.New("connection service mismatch")
-	errConnectionPoolClosed      = errors.New("connection pool closed")
-	errConnectionNotConnected    = errors.New("Connect this preset first")
+	errConnectionPoolClosed   = errors.New("connection pool closed")
+	errConnectionNotConnected = errors.New("Connect this preset first")
 )
 
 type pooledConnection struct {
-	owner         string
 	connection    pluginapi.Connection
 	leases        map[string]struct{}
 	active        int
@@ -102,15 +99,15 @@ func (pool *connectionPool) closeIdleConnections() {
 	}
 }
 
-func (pool *connectionPool) Connect(key, owner, lease string, factory func() (pluginapi.Connection, error)) error {
+func (pool *connectionPool) Connect(key, lease string, factory func() (pluginapi.Connection, error)) error {
 	pool.EvictIdle()
-	_, err := pool.get(key, owner, lease, false, factory)
+	_, err := pool.get(key, lease, false, factory)
 	return err
 }
 
-func (pool *connectionPool) Acquire(key, owner, lease string, factory func() (pluginapi.Connection, error)) (pluginapi.Connection, func(), error) {
+func (pool *connectionPool) Acquire(key, lease string, factory func() (pluginapi.Connection, error)) (pluginapi.Connection, func(), error) {
 	pool.EvictIdle()
-	entry, err := pool.get(key, owner, lease, true, factory)
+	entry, err := pool.get(key, lease, true, factory)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -121,7 +118,7 @@ func (pool *connectionPool) Acquire(key, owner, lease string, factory func() (pl
 	return entry.connection, release, nil
 }
 
-func (pool *connectionPool) AcquireExisting(key, owner, lease string) (pluginapi.Connection, func(), error) {
+func (pool *connectionPool) AcquireExisting(key, lease string) (pluginapi.Connection, func(), error) {
 	pool.EvictIdle()
 	lease = leaseName(lease)
 	pool.mu.Lock()
@@ -133,10 +130,6 @@ func (pool *connectionPool) AcquireExisting(key, owner, lease string) (pluginapi
 	if entry == nil {
 		pool.mu.Unlock()
 		return nil, nil, errConnectionNotConnected
-	}
-	if entry.owner != owner {
-		pool.mu.Unlock()
-		return nil, nil, fmt.Errorf("%w: %s is already connected by %s", errConnectionServiceMismatch, key, entry.owner)
 	}
 	if _, connected := entry.leases[lease]; !connected {
 		pool.mu.Unlock()
@@ -150,7 +143,7 @@ func (pool *connectionPool) AcquireExisting(key, owner, lease string) (pluginapi
 	return entry.connection, release, nil
 }
 
-func (pool *connectionPool) get(key, owner, lease string, active bool, factory func() (pluginapi.Connection, error)) (*pooledConnection, error) {
+func (pool *connectionPool) get(key, lease string, active bool, factory func() (pluginapi.Connection, error)) (*pooledConnection, error) {
 	lease = leaseName(lease)
 	for {
 		pool.mu.Lock()
@@ -159,10 +152,6 @@ func (pool *connectionPool) get(key, owner, lease string, active bool, factory f
 			return nil, errConnectionPoolClosed
 		}
 		if entry := pool.connections[key]; entry != nil {
-			if entry.owner != owner {
-				pool.mu.Unlock()
-				return nil, fmt.Errorf("%w: %s is already connected by %s", errConnectionServiceMismatch, key, entry.owner)
-			}
 			entry.leases[lease] = struct{}{}
 			entry.lastUsed = pool.now()
 			entry.closeWhenIdle = false
@@ -197,7 +186,7 @@ func (pool *connectionPool) get(key, owner, lease string, active bool, factory f
 		}
 		if err == nil {
 			pool.connections[key] = &pooledConnection{
-				owner: owner, connection: connection, leases: map[string]struct{}{}, lastUsed: pool.now(),
+				connection: connection, leases: map[string]struct{}{}, lastUsed: pool.now(),
 			}
 		}
 		creation.err = err

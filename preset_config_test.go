@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -74,14 +75,20 @@ func TestLoadPresetConfigRejectsInvalidConfiguration(t *testing.T) {
 	}
 }
 
-func TestLoadPresetConfigRejectsMissingFile(t *testing.T) {
-	_, err := loadPresetConfig(filepath.Join(t.TempDir(), "missing.json"), map[string]bool{"redis": true})
-	if err == nil || !strings.Contains(err.Error(), "load preset connections") {
-		t.Fatalf("error = %v", err)
+func TestLoadPresetConfigToleratesMissingFile(t *testing.T) {
+	config, err := loadPresetConfig(filepath.Join(t.TempDir(), "missing.json"), map[string]bool{"redis": true})
+	if err != nil {
+		t.Fatalf("missing file should yield empty config: %v", err)
+	}
+	if len(config.Profiles) != 0 {
+		t.Fatalf("profiles = %#v", config.Profiles)
 	}
 }
 
 func TestBundledPresetConfigPreservesExistingProfiles(t *testing.T) {
+	if _, err := os.Stat("connections.json"); errors.Is(err, os.ErrNotExist) {
+		t.Skip("connections.json is not present in this checkout")
+	}
 	config, err := loadPresetConfig("connections.json", map[string]bool{"aerospike": true, "redis": true})
 	if err != nil {
 		t.Fatal(err)
@@ -136,7 +143,8 @@ func TestServerInjectsConfiguredPresetConnections(t *testing.T) {
 }
 
 func TestServerRejectsInvalidConfiguredPresetConnections(t *testing.T) {
-	t.Setenv("CONNECTIONS_FILE", filepath.Join(t.TempDir(), "missing.json"))
+	path := writePresetConfig(t, `{"profiles":[{"id":"local","label":"Local","connections":[{"id":"preset:redis-local","name":"redis-local","tool":"redis","host":"127.0.0.1","port":"6379","mode":"single"}]}],"extra":true}`)
+	t.Setenv("CONNECTIONS_FILE", path)
 	if _, err := newServer(); err == nil || !strings.Contains(err.Error(), "load preset connections") {
 		t.Fatalf("error = %v", err)
 	}

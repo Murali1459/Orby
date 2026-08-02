@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	as "github.com/aerospike/aerospike-client-go/v8"
-	"pluginvm/plugins"
+	"orby/plugins"
 )
 
 func TestMetadataProvidesVisualCommand(t *testing.T) {

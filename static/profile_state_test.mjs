@@ -24,5 +24,5 @@ test("collapsed profile state is persisted independently", () => {
 });
 
 test("invalid stored state is ignored", () => {
-  assert.deepEqual([...loadCollapsedProfiles(memoryStorage({ pluginvm_collapsed_profiles_v1: "{" }))], []);
+  assert.deepEqual([...loadCollapsedProfiles(memoryStorage({ orby_collapsed_profiles_v1: "{" }))], []);
 });

@@ -1,13 +1,13 @@
+import { clamp, escapeHTML, sameSet, copyToClipboard } from "./app_utils.mjs";
 import { refreshCustomSelects } from "./custom_select.mjs";
-import { clamp, escapeHTML, sameSet } from "./app_utils.mjs";
-import { createTableModel, createTextModel, scheduleVirtualRender, virtualHeight, adjustViewportForScrollbar } from "./output_view.mjs";
+import { createTableModel, createTextModel, createBrowseModel, scheduleVirtualRender, virtualHeight, adjustViewportForScrollbar } from "./output_view.mjs";
+import { normalizePayload } from "./virtual_output.mjs";
 import { connectionGroups, mergeConnections } from "./preconfigured_connections.mjs";
 import { loadCollapsedProfiles, setProfileCollapsed } from "./profile_state.mjs";
 
-const { normalizePayload } = globalThis.PluginVMVirtual;
-const tools = Array.isArray(window.PLUGINVM_TOOLS) ? window.PLUGINVM_TOOLS : [];
+const tools = Array.isArray(window.ORBY_TOOLS) ? window.ORBY_TOOLS : [];
 const presetConfig = window.ORBY_PRESET_CONFIG && Array.isArray(window.ORBY_PRESET_CONFIG.profiles) ? window.ORBY_PRESET_CONFIG : { profiles: [] };
-const connectionKey = "pluginvm_connections_v1";
+const connectionKey = "orby_connections_v1";
 const workspaceLayoutKey = "orby_workspace_layout_v1";
 const NEW_CONNECTION = "";
 const commandHistory = [];
@@ -23,6 +23,7 @@ let probeGeneration = 0;
 let manualConnectionID = newID();
 let historyToolFilter = "all";
 let outputRefreshPending = false;
+let lastBrowsePattern = "*";
 
 const els = {
   composerTool: document.getElementById("composer-tool"),
@@ -37,6 +38,7 @@ const els = {
   composerFormat: document.getElementById("composer-format"),
   queryForm: document.getElementById("query-form"),
   runQuery: document.getElementById("run-query"),
+  browseKeys: document.getElementById("browse-keys"),
   emptyState: document.getElementById("empty-state"),
   emptyConnectionName: document.getElementById("empty-connection-name"),
   outputScroll: document.querySelector(".output-scroll"),
@@ -107,8 +109,6 @@ function applyWorkspaceLayout() {
   document.documentElement.classList.remove("left-panel-collapsed", "right-panel-collapsed");
 }
 
-const escapeAttr = escapeHTML;
-
 function newID() {
   return globalThis.crypto?.randomUUID?.() || `connection-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
 }
@@ -164,7 +164,7 @@ function formatsForTool(tool) {
 }
 
 function renderToolOptions() {
-  const options = tools.map((tool) => `<option value="${escapeAttr(tool.name)}">${escapeHTML(tool.label || tool.name)}</option>`).join("");
+  const options = tools.map((tool) => `<option value="${escapeHTML(tool.name)}">${escapeHTML(tool.label || tool.name)}</option>`).join("");
   els.composerTool.innerHTML = options;
   els.toolSelect.innerHTML = options;
   refreshCustomSelects(els.composerTool);
@@ -177,12 +177,13 @@ function syncToolPresentation() {
   els.composerToolLogo.src = tool?.icon || "/static/icons/terminal.svg";
   els.composerToolPicker.title = label;
   els.composerTool.setAttribute("aria-label", `Plugin: ${label}`);
+  els.browseKeys.hidden = tool?.name !== "redis";
   refreshCustomSelects(els.composerTool);
 }
 
 function renderFormats(preferred) {
   const formats = formatsForTool(currentTool());
-  els.composerFormat.innerHTML = formats.map((format) => `<option value="${escapeAttr(format)}">${escapeHTML(format.toUpperCase())}</option>`).join("");
+  els.composerFormat.innerHTML = formats.map((format) => `<option value="${escapeHTML(format)}">${escapeHTML(format.toUpperCase())}</option>`).join("");
   els.composerFormat.value = formats.includes(preferred) ? preferred : (formats.includes(currentTool()?.defaultFormat) ? currentTool().defaultFormat : formats[0]);
   syncFormatPresentation();
   refreshCustomSelects(els.composerFormat);
@@ -205,7 +206,7 @@ function selectedConnection() {
 
 function renderConnectionOptions(preferred = els.composerConnection.value) {
   const compatible = connectionsForTool();
-  const html = `<option value="">New connection</option>${compatible.map((item) => `<option value="${escapeAttr(item.id)}">${escapeHTML(item.name)}</option>`).join("")}`;
+  const html = `<option value="">New connection</option>${compatible.map((item) => `<option value="${escapeHTML(item.id)}">${escapeHTML(item.name)}</option>`).join("")}`;
   els.composerConnection.innerHTML = html;
   els.connectionSelect.innerHTML = html;
   const selected = compatible.some((item) => item.id === preferred) ? preferred : NEW_CONNECTION;
@@ -220,17 +221,17 @@ function renderConnectionRail() {
   const selectedTool = els.composerTool.value;
   const connections = loadConnections();
   const manualConnected = activeConnectionIDs.has(manualConnectionID) ? " is-connected" : "";
-  const manual = !selectedID ? `<button type="button" class="connection-item is-active${manualConnected}" data-connection-id="" data-connection-tool="${escapeAttr(selectedTool)}"><span class="connection-dot"></span><span class="connection-item-copy"><strong>New connection</strong><small>Enter connection details</small></span></button>` : "";
+  const manual = !selectedID ? `<button type="button" class="connection-item is-active${manualConnected}" data-connection-id="" data-connection-tool="${escapeHTML(selectedTool)}"><span class="connection-dot"></span><span class="connection-item-copy"><strong>New connection</strong><small>Enter connection details</small></span></button>` : "";
   const collapsedProfiles = loadCollapsedProfiles(localStorage);
   const groups = connectionGroups(connections, presetConfig.profiles).map((group) => {
     const items = group.connections.map((item) => {
       const active = item.id === selectedID && item.tool === selectedTool ? " is-active" : "";
       const connected = activeConnectionIDs.has(item.id) ? " is-connected" : "";
       const endpoint = item.host?.includes(":") ? item.host : [item.host, item.port].filter(Boolean).join(":");
-      return `<button type="button" class="connection-item${active}${connected}" data-connection-id="${escapeAttr(item.id)}" data-connection-tool="${escapeAttr(item.tool)}"><span class="connection-dot"></span><span class="connection-item-copy"><strong>${escapeHTML(item.name)}</strong><small>${escapeHTML(endpoint || item.tool)}</small></span></button>`;
+      return `<button type="button" class="connection-item${active}${connected}" data-connection-id="${escapeHTML(item.id)}" data-connection-tool="${escapeHTML(item.tool)}"><span class="connection-dot"></span><span class="connection-item-copy"><strong>${escapeHTML(item.name)}</strong><small>${escapeHTML(endpoint || item.tool)}</small></span></button>`;
     }).join("");
     const open = collapsedProfiles.has(group.profile) ? "" : " open";
-    return `<details class="connection-group" data-profile="${escapeAttr(group.profile)}"${open}><summary class="connection-group-summary"><span>${escapeHTML(group.label)}</span><span class="connection-group-count">${group.connections.length}</span><span class="connection-group-chevron" aria-hidden="true"></span></summary><div class="connection-group-items">${items}</div></details>`;
+    return `<details class="connection-group" data-profile="${escapeHTML(group.profile)}"${open}><summary class="connection-group-summary"><span>${escapeHTML(group.label)}</span><span class="connection-group-count">${group.connections.length}</span><span class="connection-group-chevron" aria-hidden="true"></span></summary><div class="connection-group-items">${items}</div></details>`;
   }).join("");
   els.connectionList.innerHTML = manual + groups;
   els.connectionList.querySelectorAll("details.connection-group").forEach((details) => details.addEventListener("toggle", () => {
@@ -254,8 +255,8 @@ async function refreshActiveConnections() {
 function renderPluginFields(values = {}) {
   const fields = Array.isArray(currentTool()?.fields) ? currentTool().fields : [];
   els.pluginFields.innerHTML = fields.map((field) => `<label>${escapeHTML(field.label || field.key)}
-    <input data-plugin-field="${escapeAttr(field.key)}" name="${escapeAttr(field.key)}" form="query-form"
-      type="${escapeAttr(field.inputType || "text")}" value="${escapeAttr(values[field.key] ?? field.default ?? "")}" placeholder="${escapeAttr(field.placeholder || "")}"></label>`).join("");
+    <input data-plugin-field="${escapeHTML(field.key)}" name="${escapeHTML(field.key)}" form="query-form"
+      type="${escapeHTML(field.inputType || "text")}" value="${escapeHTML(values[field.key] ?? field.default ?? "")}" placeholder="${escapeHTML(field.placeholder || "")}"></label>`).join("");
 }
 
 function syncFormState() {
@@ -520,6 +521,7 @@ function elementControl(element, state) {
     input.autocomplete = "off";
     input.spellcheck = false;
     if (element.grow) input.classList.add("composer-grow");
+    if (currentTool()?.name === "redis" && element.name === "query") return redisGhostWrap(input);
     return input;
   }
   if (element.kind === "checkbox") {
@@ -578,6 +580,85 @@ function elementControl(element, state) {
     return wrapper;
   }
   return document.createTextNode("");
+}
+
+function currentToolCommands() {
+  return Array.isArray(currentTool()?.commands) ? currentTool().commands : [];
+}
+
+function redisGhostWrap(input) {
+  const wrap = document.createElement("span");
+  wrap.className = "redis-cmd-wrap";
+  const ghost = document.createElement("span");
+  ghost.className = "ghost-layer";
+  ghost.setAttribute("aria-hidden", "true");
+  const ghostTyped = document.createElement("span");
+  ghostTyped.className = "g-typed";
+  const ghostSugg = document.createElement("span");
+  ghostSugg.className = "g-sugg";
+  ghost.append(ghostTyped, ghostSugg);
+  let suggested = "";
+  function renderGhost() {
+    const value = input.value;
+    const typedText = value.trimEnd();
+    const tokens = value.split(/\s+/).filter((t) => t.length > 0);
+    const typedCmd = (tokens[0] || "").toUpperCase();
+    if (tokens.length === 0 || !typedCmd) {
+      ghostTyped.textContent = "";
+      ghostSugg.textContent = "";
+      suggested = "";
+      return;
+    }
+    const commands = currentToolCommands();
+    const exact = commands.find((command) => command.name === typedCmd);
+    if (!exact) {
+      const matches = commands.filter((command) => command.name.startsWith(typedCmd));
+      if (matches.length === 0) {
+        ghostTyped.textContent = "";
+        ghostSugg.textContent = "";
+        suggested = "";
+        return;
+      }
+      const pick = matches[0];
+      ghostTyped.textContent = typedText;
+      ghostSugg.textContent = pick.name.slice(typedCmd.length) + " ";
+      suggested = pick.name.slice(typedCmd.length) + " ";
+      return;
+    }
+    const args = exact.args;
+    const filled = tokens.length - 1;
+    if (filled < args.length) {
+      const remaining = args.slice(filled).join(" ");
+      ghostTyped.textContent = typedText;
+      ghostSugg.textContent = " " + remaining;
+      suggested = " " + remaining;
+    } else {
+      ghostTyped.textContent = "";
+      ghostSugg.textContent = "";
+      suggested = "";
+    }
+  }
+  input.addEventListener("input", renderGhost);
+  input.addEventListener("focus", renderGhost);
+  input.addEventListener("keydown", (event) => {
+    if (event.key !== "Tab" || !suggested) return;
+    event.preventDefault();
+    const pos = input.selectionStart ?? input.value.length;
+    const before = input.value.slice(0, pos);
+    const trailing = before.match(/\s*$/)?.[0] || "";
+    if (trailing) {
+      const cleanPos = pos - trailing.length;
+      const delimiter = /^\s/.test(suggested) ? " " : "";
+      const insertion = suggested.replace(/^\s+/, "");
+      input.value = input.value.slice(0, cleanPos) + delimiter + insertion + input.value.slice(pos);
+    } else {
+      input.value = input.value.slice(0, pos) + suggested + input.value.slice(pos);
+    }
+    suggested = "";
+    renderGhost();
+  });
+  wrap.append(ghost, input);
+  return wrap;
 }
 
 function composerControls(elements, state) {
@@ -658,7 +739,7 @@ async function loadOptions(select, generation = renderGeneration) {
     const data = response.ok ? await response.json() : { options: [] };
     if (generation !== renderGeneration) return;
     const options = Array.isArray(data.options) ? data.options : [];
-    select.innerHTML = options.length ? options.map((item) => `<option value="${escapeAttr(item.value)}">${escapeHTML(item.label || item.value)}</option>`).join("") : `<option value="">No ${escapeHTML(select.name)}</option>`;
+    select.innerHTML = options.length ? options.map((item) => `<option value="${escapeHTML(item.value)}">${escapeHTML(item.label || item.value)}</option>`).join("") : `<option value="">No ${escapeHTML(select.name)}</option>`;
     if (options.some((item) => item.value === preferred)) select.value = preferred;
     select.dataset.preferred = "";
   } catch {
@@ -728,16 +809,16 @@ function renderCondition(node, parent) {
   const type = document.createElement("select");
   type.setAttribute("aria-label", "Bin type");
   const types = currentTool().composer.expression.types || [];
-  type.innerHTML = types.map((item) => `<option value="${escapeAttr(item.value)}">${escapeHTML(item.label || item.value)}</option>`).join("");
+  type.innerHTML = types.map((item) => `<option value="${escapeHTML(item.value)}">${escapeHTML(item.label || item.value)}</option>`).join("");
   type.value = node.type;
   const operator = document.createElement("select"); operator.setAttribute("aria-label", "Operator");
   const valueHost = document.createElement("span"); valueHost.className = "expression-value";
   const remove = document.createElement("button"); remove.type = "button"; remove.textContent = "×"; remove.setAttribute("aria-label", "Remove condition");
   function renderValue() {
     const definition = types.find((item) => item.value === type.value) || types[0];
-    operator.innerHTML = (definition?.operators || []).map((item) => `<option value="${escapeAttr(item.value)}">${escapeHTML(item.label || item.value)}</option>`).join("");
+    operator.innerHTML = (definition?.operators || []).map((item) => `<option value="${escapeHTML(item.value)}">${escapeHTML(item.label || item.value)}</option>`).join("");
     operator.value = (definition?.operators || []).some((item) => item.value === node.operator) ? node.operator : definition?.operators?.[0]?.value || "";
-    valueHost.innerHTML = definition?.inputType === "select" ? '<select aria-label="Value"><option value="true">true</option><option value="false">false</option></select>' : `<input aria-label="Value" type="${escapeAttr(definition?.inputType || "text")}">`;
+    valueHost.innerHTML = definition?.inputType === "select" ? '<select aria-label="Value"><option value="true">true</option><option value="false">false</option></select>' : `<input aria-label="Value" type="${escapeHTML(definition?.inputType || "text")}">`;
     const value = valueHost.firstElementChild; value.value = node.value || "";
     value.addEventListener("input", () => { node.value = value.value; syncExpressionInput(); });
     value.addEventListener("change", () => { node.value = value.value; syncExpressionInput(); });
@@ -783,7 +864,7 @@ function countConditions(node) {
 function composerSummary() {
   const values = composerValues();
   return currentElements().map((element) => {
-    if (element.kind === "literal") return element.text || "";
+    if (element.kind === "literal") return element.decorative ? "" : (element.text || "");
     if (element.kind === "input" || element.kind === "select") return values[element.name] || "";
     return "";
   }).filter(Boolean).join(" ").replace(/\s+\.\s+/g, ".");
@@ -812,7 +893,7 @@ function renderHistory() {
     const heading = nextGroup === group ? "" : `<div class="history-group">${nextGroup}</div>`;
     group = nextGroup;
     const meta = [item.connectionName, item.format?.toUpperCase()].filter(Boolean).join(" · ");
-    return `${heading}<button type="button" class="hist-item" data-history-index="${index}"><span class="hist-badge ${escapeAttr(item.tool)}">${escapeHTML(item.tool === "aerospike" ? "AS" : item.tool)}</span><span class="hist-copy"><span class="hist-cmd">${escapeHTML(item.summary)}</span><small>${escapeHTML(meta)}</small></span><span class="hist-load-icon" aria-hidden="true"></span></button>`;
+    return `${heading}<button type="button" class="hist-item" data-history-index="${index}"><span class="hist-badge ${escapeHTML(item.tool)}">${escapeHTML(item.tool === "aerospike" ? "AS" : item.tool)}</span><span class="hist-copy"><span class="hist-cmd">${escapeHTML(item.summary)}</span><small>${escapeHTML(meta)}</small></span><span class="hist-load-icon" aria-hidden="true"></span></button>`;
   }).join("") || `<p class="history-empty">No matching commands</p>`;
 }
 
@@ -872,7 +953,7 @@ function initializeVirtualOutputs() {
     payload = normalizePayload(payload);
     source?.remove();
     const block = root.closest(".cmd-block");
-    const model = payload.kind === "table" ? createTableModel(root, payload) : createTextModel(root, payload);
+    const model = payload.kind === "table" ? createTableModel(root, payload) : payload.kind === "browse" ? createBrowseModel(root, payload) : createTextModel(root, payload);
     outputModels.set(block, model);
     root.setAttribute("data-virtual-ready", "true");
     model.viewport.style.height = `${virtualHeight(model.contentHeight, false)}px`;
@@ -908,17 +989,7 @@ function removeOutput(block) {
 
 async function copyOutput(block, button) {
   const text = outputModels.get(block)?.copyText() || block.querySelector(".cmd-output")?.innerText || "";
-  try {
-    await navigator.clipboard.writeText(text);
-  } catch {
-    const textarea = document.createElement("textarea");
-    textarea.value = text;
-    textarea.style.cssText = "position:fixed;left:-9999px;top:-9999px;opacity:0";
-    document.body.append(textarea);
-    textarea.select();
-    document.execCommand("copy");
-    textarea.remove();
-  }
+  await copyToClipboard(text);
   button.classList.add("is-confirmed");
   window.setTimeout(() => button.classList.remove("is-confirmed"), 1200);
 }
@@ -928,10 +999,55 @@ async function rerunQuery(block) {
   try { state = JSON.parse(block.dataset.state || "{}"); } catch { state = {}; }
   if (!Object.keys(state).length && block.dataset.query) state.query = block.dataset.query;
   const format = block.dataset.outputFormat;
-  await restoreHistoryItem({ tool: block.dataset.tool, state }, false);
+  // Order matters: connection must be applied before renderComposer so
+  // dynamic options (namespaces/sets) load against the block's connection.
+  if (els.composerTool.value !== block.dataset.tool) { els.composerTool.value = block.dataset.tool; await handleToolChange(); }
+  applyBlockConnection(block);
+  setConnectionStatus("reachable", "Connected");
+  await renderComposer(state);
   if ([...els.composerFormat.options].some((option) => option.value === format)) els.composerFormat.value = format;
   syncFormatPresentation();
   els.queryForm.requestSubmit();
+}
+
+// Runs an inspect command (e.g. HGETALL <key>) from a BROWSE block against the
+// block's own connection, reusing the same connection replay as rerunQuery.
+async function inspectBrowseKey(block, command) {
+  if (els.composerTool.value !== block.dataset.tool) { els.composerTool.value = block.dataset.tool; await handleToolChange(); }
+  applyBlockConnection(block);
+  setConnectionStatus("reachable", "Connected");
+  await renderComposer({ query: command });
+  els.composerFormat.value = "raw";
+  syncFormatPresentation();
+  els.queryForm.requestSubmit();
+}
+
+function applyBlockConnection(block) {
+  const data = block.dataset;
+  const connectionId = data.connectionId || "";
+  const saved = connectionId && connectionsForTool().some((item) => item.id === connectionId);
+  els.composerConnection.value = saved ? connectionId : NEW_CONNECTION;
+  els.connectionSelect.value = els.composerConnection.value;
+  els.connectionName.value = data.connectionName || "";
+  els.host.value = data.host || "";
+  els.port.value = data.port || "";
+  els.mode.value = data.mode || "single";
+  renderPluginFields(parseFieldsJSON(data.fields));
+  syncFormState();
+  // Override syncFormState: replay the original lease so pool/preset lookups match the first run.
+  els.formConnectionID.value = connectionId || els.formConnectionID.value;
+  els.formLeaseID.value = data.leaseId || els.formLeaseID.value;
+  els.formConnectionName.value = data.connectionName || els.formConnectionName.value;
+  els.formHost.value = data.host || els.formHost.value;
+  els.formPort.value = data.port || els.formPort.value;
+  els.formMode.value = data.mode || els.formMode.value;
+  renderConnectionRail();
+}
+
+function parseFieldsJSON(raw) {
+  if (!raw) return {};
+  try { const parsed = JSON.parse(raw); return parsed && typeof parsed === "object" ? parsed : {}; }
+  catch { return {}; }
 }
 
 async function handleToolChange(preferredConnection = "") {
@@ -1004,7 +1120,20 @@ els.queryForm.addEventListener("submit", (event) => {
   syncFormState(); syncExpressionInput();
   const message = validateExpression();
   if (message) { event.preventDefault(); els.actionPanel.hidden = false; renderExpressionPanel(); els.actionPanel.querySelector(".expression-message").textContent = message; return; }
-  const state = composerValues(); addHistory(els.composerTool.value, composerSummary(), state); setRunning(true);
+  const state = composerValues();
+  const browseMatch = /^BROWSE\s+(.+?)(?:\s+LIMIT\s+\d+)?$/i.exec(String(state.query || "").trim());
+  if (browseMatch) lastBrowsePattern = browseMatch[1].trim() || "*";
+  addHistory(els.composerTool.value, composerSummary(), state); setRunning(true);
+});
+
+els.browseKeys.addEventListener("click", () => {
+  const queryInput = els.pluginComposer.querySelector('[data-composer-name="query"]');
+  if (queryInput) {
+    queryInput.value = `BROWSE ${lastBrowsePattern}`;
+    queryInput.dispatchEvent(new Event("input", { bubbles: true }));
+    saveDraft();
+  }
+  els.queryForm.requestSubmit();
 });
 
 els.historyPanel.addEventListener("click", (event) => {
@@ -1035,6 +1164,8 @@ els.outputArea.addEventListener("click", async (event) => {
   if (event.target.closest(".cmd-rerun")) return rerunQuery(block);
   if (event.target.closest(".cmd-close")) return removeOutput(block);
   if (event.target.closest(".cmd-copy")) return copyOutput(block, event.target.closest(".cmd-copy"));
+  const browseKey = event.target.closest(".browse-key");
+  if (browseKey?.dataset.inspect) return inspectBrowseKey(block, browseKey.dataset.inspect);
   const toggle = event.target.closest(".cmd-toggle");
   if (toggle) {
     const output = block.querySelector(".cmd-output");

@@ -36,7 +36,7 @@ Orby currently supports Aerospike and Redis through their native Go client libra
 - **Read-only by design** — Redis commands are allow-listed and Aerospike exposes read, scan, and filter workflows only.
 - **Plugin-driven UI** — each integration owns its connection fields, composer controls, live options, formats, and execution behavior.
 - **Reusable connections** — pooled clients are reused across queries and closed after 10 minutes of inactivity.
-- **Browser-local workspace** — saved connections, sidebar preferences, and up to 100 history entries remain in browser storage.
+- **Browser-local workspace** — saved connections and sidebar preferences remain in browser storage.
 - **Operationally simple** — a single Go server hosts both the UI and backend.
 
 ## Supported workflows

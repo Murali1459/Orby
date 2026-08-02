@@ -9,13 +9,7 @@ test("virtual output module exists", () => {
 });
 
 if (existsSync(modulePath)) {
-  const { chunkText, fitHeight, normalizePayload, previewText, tableText, visibleRange } = await import(modulePath);
-
-  test("fitHeight uses content height until the maximum", () => {
-    assert.equal(fitHeight(19, 330), 19);
-    assert.equal(fitHeight(330, 330), 330);
-    assert.equal(fitHeight(700, 330), 330);
-  });
+  const { chunkText, normalizePayload, previewText, tableText, visibleRange } = await import(modulePath);
 
   test("normalizePayload renders an empty table as a compact message", () => {
     assert.deepEqual(normalizePayload({ kind: "table", heads: [], rows: [] }), { kind: "raw", text: "No records" });

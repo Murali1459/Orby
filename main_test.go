@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"errors"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -11,7 +12,7 @@ import (
 	"strings"
 	"testing"
 
-	pluginapi "pluginvm/plugins"
+	pluginapi "orby/plugins"
 )
 
 func TestComposerCSSKeepsResponsiveControlsReadable(t *testing.T) {
@@ -106,10 +107,7 @@ func TestFilterPanelReservesSpaceAndKeepsLatestOutputVisible(t *testing.T) {
 }
 
 func TestStaticAssetsRequireRevalidation(t *testing.T) {
-	server, err := newServer()
-	if err != nil {
-		t.Fatal(err)
-	}
+	server := mustServer(t)
 	response := httptest.NewRecorder()
 	server.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/static/app.js", nil))
 	if response.Code != http.StatusOK || response.Header().Get("Cache-Control") != "no-cache" {
@@ -118,10 +116,7 @@ func TestStaticAssetsRequireRevalidation(t *testing.T) {
 }
 
 func TestPageProvidesClearOutputsWithoutClearingHistory(t *testing.T) {
-	server, err := newServer()
-	if err != nil {
-		t.Fatal(err)
-	}
+	server := mustServer(t)
 	response := httptest.NewRecorder()
 	server.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/", nil))
 	body := response.Body.String()
@@ -146,10 +141,7 @@ func TestPageProvidesClearOutputsWithoutClearingHistory(t *testing.T) {
 }
 
 func TestPageProvidesApprovedWorkbenchNavigationAndHistoryControls(t *testing.T) {
-	server, err := newServer()
-	if err != nil {
-		t.Fatal(err)
-	}
+	server := mustServer(t)
 	response := httptest.NewRecorder()
 	server.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/", nil))
 	body := response.Body.String()
@@ -173,10 +165,7 @@ func TestPageProvidesApprovedWorkbenchNavigationAndHistoryControls(t *testing.T)
 }
 
 func TestPageUsesMinimalOrbyShell(t *testing.T) {
-	server, err := newServer()
-	if err != nil {
-		t.Fatal(err)
-	}
+	server := mustServer(t)
 	response := httptest.NewRecorder()
 	server.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/", nil))
 	body := response.Body.String()
@@ -195,10 +184,7 @@ func TestPageUsesMinimalOrbyShell(t *testing.T) {
 }
 
 func TestOrbyHeaderAndConnectionSidebarUseApprovedCompactStyling(t *testing.T) {
-	server, err := newServer()
-	if err != nil {
-		t.Fatal(err)
-	}
+	server := mustServer(t)
 	response := httptest.NewRecorder()
 	server.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/", nil))
 	body := response.Body.String()
@@ -235,10 +221,7 @@ func TestOrbyHeaderAndConnectionSidebarUseApprovedCompactStyling(t *testing.T) {
 }
 
 func TestPluginComposerRendersLeadingControlsOutsideTheQueryLine(t *testing.T) {
-	server, err := newServer()
-	if err != nil {
-		t.Fatal(err)
-	}
+	server := mustServer(t)
 	response := httptest.NewRecorder()
 	server.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/", nil))
 	body := response.Body.String()
@@ -302,10 +285,7 @@ func TestConnectionListUsesOneOuterScrollbarWithoutClippingProfiles(t *testing.T
 }
 
 func TestEmptyStateDoesNotOfferExampleQuery(t *testing.T) {
-	server, err := newServer()
-	if err != nil {
-		t.Fatal(err)
-	}
+	server := mustServer(t)
 	response := httptest.NewRecorder()
 	server.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/", nil))
 	if strings.Contains(response.Body.String(), `id="use-example"`) {
@@ -341,10 +321,7 @@ func TestPluginComposerStaysAlignedAndHidesOptionalControlsWhenNarrow(t *testing
 }
 
 func TestDesktopSidebarsDockResizeAndRememberLayout(t *testing.T) {
-	server, err := newServer()
-	if err != nil {
-		t.Fatal(err)
-	}
+	server := mustServer(t)
 	response := httptest.NewRecorder()
 	server.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/", nil))
 	body := response.Body.String()
@@ -405,10 +382,7 @@ func TestDesktopSidebarsDockResizeAndRememberLayout(t *testing.T) {
 }
 
 func TestRememberedSidebarLayoutIsAppliedBeforeFirstPaint(t *testing.T) {
-	server, err := newServer()
-	if err != nil {
-		t.Fatal(err)
-	}
+	server := mustServer(t)
 	response := httptest.NewRecorder()
 	server.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/", nil))
 	body := response.Body.String()
@@ -442,10 +416,7 @@ func TestRememberedSidebarLayoutIsAppliedBeforeFirstPaint(t *testing.T) {
 }
 
 func TestConnectionActionsShareOneHeaderToolbar(t *testing.T) {
-	server, err := newServer()
-	if err != nil {
-		t.Fatal(err)
-	}
+	server := mustServer(t)
 	response := httptest.NewRecorder()
 	server.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/", nil))
 	body := response.Body.String()
@@ -481,13 +452,10 @@ func TestConnectionActionsShareOneHeaderToolbar(t *testing.T) {
 }
 
 func TestResultCardsProvideCompactIconActions(t *testing.T) {
-	server, err := newServer()
-	if err != nil {
-		t.Fatal(err)
-	}
+	server := mustServer(t)
 	tool, _ := server.metadataFor("redis")
 	response := httptest.NewRecorder()
-	server.writeQueryResult(response, tool, queryResult{
+	server.writeQueryResult(response, tool, queryRequest{}, queryResult{
 		Tool: "redis", Query: "GET greeting", Format: "raw", Raw: "hello", IsRaw: true, Succeeded: true,
 	}, "success")
 	body := response.Body.String()
@@ -559,10 +527,7 @@ func TestWorkbenchPanelsDockWithoutCoveringCanvas(t *testing.T) {
 }
 
 func TestResponsivePanelsOpenAsAccessibleDrawers(t *testing.T) {
-	server, err := newServer()
-	if err != nil {
-		t.Fatal(err)
-	}
+	server := mustServer(t)
 	response := httptest.NewRecorder()
 	server.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/", nil))
 	body := response.Body.String()
@@ -609,10 +574,7 @@ func TestResponsivePanelsOpenAsAccessibleDrawers(t *testing.T) {
 }
 
 func TestConnectionActionsReflectFormValidity(t *testing.T) {
-	server, err := newServer()
-	if err != nil {
-		t.Fatal(err)
-	}
+	server := mustServer(t)
 	response := httptest.NewRecorder()
 	server.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/", nil))
 	body := response.Body.String()
@@ -707,52 +669,6 @@ func TestSelectsUseShadcnStyleWithoutLosingNativeSemantics(t *testing.T) {
 	}
 }
 
-func TestPageLoadsAccessibleCustomSelectEnhancement(t *testing.T) {
-	server, err := newServer()
-	if err != nil {
-		t.Fatal(err)
-	}
-	response := httptest.NewRecorder()
-	server.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/", nil))
-	if !strings.Contains(response.Body.String(), `src="/static/app.js?v=orby-controls-1"`) {
-		t.Fatal("page does not load the custom-select-enabled app bundle")
-	}
-
-	script, err := os.ReadFile("static/app.js")
-	if err != nil {
-		t.Fatal(err)
-	}
-	javascript := string(script)
-	for _, expected := range []string{
-		`import { refreshCustomSelects } from "./custom_select.mjs";`,
-		"refreshCustomSelects(document);",
-		"refreshCustomSelects(els.pluginComposer);",
-		"refreshCustomSelects(els.actionPanel);",
-	} {
-		if !strings.Contains(javascript, expected) {
-			t.Fatalf("custom select integration is missing %q", expected)
-		}
-	}
-
-	stylesheet, err := os.ReadFile("static/style.css")
-	if err != nil {
-		t.Fatal(err)
-	}
-	css := string(stylesheet)
-	for _, expected := range []string{
-		".custom-select-trigger {",
-		".custom-select-content {",
-		".custom-select-option[aria-selected=\"true\"]",
-		".custom-select-trigger[aria-expanded=\"true\"]",
-		".tool-picker > span:not(.custom-select-root)",
-		".format-picker > span:not(.custom-select-root)",
-	} {
-		if !strings.Contains(css, expected) {
-			t.Fatalf("custom select styling is missing %q", expected)
-		}
-	}
-}
-
 func TestFrontendGroupsPresetConnectionsWithoutAutoConnecting(t *testing.T) {
 	script, err := os.ReadFile("static/app.js")
 	if err != nil {
@@ -842,11 +758,12 @@ func TestVirtualOutputRerunAndResizeWiring(t *testing.T) {
 		t.Fatal("rerun function end is missing")
 	}
 	rerun := javascript[start : start+end]
-	restore := strings.Index(rerun, "await restoreHistoryItem({ tool: block.dataset.tool, state }, false)")
+	restore := strings.Index(rerun, "applyBlockConnection(block)")
+	render := strings.Index(rerun, "await renderComposer(state)")
 	format := strings.Index(rerun, "els.composerFormat.value = format")
 	submit := strings.Index(rerun, "els.queryForm.requestSubmit()")
-	if restore < 0 || format < restore || submit < format {
-		t.Fatal("rerun must restore the plugin before applying its saved format and submitting")
+	if restore < 0 || render < restore || format < render || submit < format {
+		t.Fatal("rerun must restore the plugin and connection before applying its saved format and submitting")
 	}
 	for _, expected := range []string{"new ResizeObserver", `window.addEventListener("resize"`, `setAttribute("role", "grid")`, `setAttribute("aria-rowcount"`} {
 		if !strings.Contains(javascript, expected) {
@@ -876,13 +793,10 @@ func TestExpressionFilterUsesUserEnteredBinName(t *testing.T) {
 }
 
 func TestSuccessfulOutputsUseCompactVirtualPayload(t *testing.T) {
-	server, err := newServer()
-	if err != nil {
-		t.Fatal(err)
-	}
+	server := mustServer(t)
 	tool, _ := server.metadataFor("redis")
 	response := httptest.NewRecorder()
-	server.writeQueryResult(response, tool, queryResult{
+	server.writeQueryResult(response, tool, queryRequest{}, queryResult{
 		Tool: "redis", Query: "KEYS *", Format: "table", Succeeded: true,
 		Rows: []map[string]any{{"index": 0, "value": "first"}, {"index": 1, "value": "last"}},
 	}, "success")
@@ -904,10 +818,7 @@ func TestSuccessfulOutputsUseCompactVirtualPayload(t *testing.T) {
 }
 
 func TestRawAndJSONOutputsUseVirtualTextPayloads(t *testing.T) {
-	server, err := newServer()
-	if err != nil {
-		t.Fatal(err)
-	}
+	server := mustServer(t)
 	tool, _ := server.metadataFor("redis")
 	tests := []struct {
 		name   string
@@ -921,7 +832,7 @@ func TestRawAndJSONOutputsUseVirtualTextPayloads(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			response := httptest.NewRecorder()
-			server.writeQueryResult(response, tool, test.result, "success")
+			server.writeQueryResult(response, tool, queryRequest{}, test.result, "success")
 			body := response.Body.String()
 			if !strings.Contains(body, `data-virtual-kind="`+test.kind+`"`) || !strings.Contains(body, `class="virtual-output-data"`) || !strings.Contains(body, test.text) {
 				t.Fatalf("%s output is not a virtual text payload: %s", test.name, body)
@@ -934,13 +845,10 @@ func TestRawAndJSONOutputsUseVirtualTextPayloads(t *testing.T) {
 }
 
 func TestVirtualPayloadCannotCloseItsScriptElement(t *testing.T) {
-	server, err := newServer()
-	if err != nil {
-		t.Fatal(err)
-	}
+	server := mustServer(t)
 	tool, _ := server.metadataFor("redis")
 	response := httptest.NewRecorder()
-	server.writeQueryResult(response, tool, queryResult{
+	server.writeQueryResult(response, tool, queryRequest{}, queryResult{
 		Tool: "redis", Query: "GET unsafe", Format: "raw", Raw: `</script><script>alert("unsafe")</script>`, IsRaw: true, Succeeded: true,
 	}, "success")
 	body := response.Body.String()
@@ -965,10 +873,7 @@ func TestDependentComposerSelectFitsItsPlaceholder(t *testing.T) {
 }
 
 func TestServerRoutesAndMethods(t *testing.T) {
-	server, err := newServer()
-	if err != nil {
-		t.Fatal(err)
-	}
+	server := mustServer(t)
 	for _, path := range []string{"/query", "/connect", "/disconnect"} {
 		response := httptest.NewRecorder()
 		server.ServeHTTP(response, httptest.NewRequest(http.MethodGet, path, nil))
@@ -982,6 +887,15 @@ func TestServerRoutesAndMethods(t *testing.T) {
 	if response.Code != http.StatusOK || !strings.Contains(body, `id="query-form"`) || !strings.Contains(body, `"name":"aerospike"`) || !strings.Contains(body, `"text":"SELECT"`) || !strings.Contains(body, `id="plugin-composer"`) || !strings.Contains(body, `id="plugin-action-panel"`) || strings.Contains(body, `id="term-input"`) {
 		t.Fatalf("index = %d %s", response.Code, response.Body.String())
 	}
+}
+
+func mustServer(t *testing.T) *server {
+	t.Helper()
+	server, err := newServer()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return server
 }
 
 type fakePlugin struct {
@@ -1026,7 +940,7 @@ func (connection *fakePluginConnection) Close() error {
 }
 
 func TestServerPersistsAndReusesConnectedPluginClient(t *testing.T) {
-	server, _ := newServer()
+	server := mustServer(t)
 	plugin := &fakePlugin{}
 	server.plugins = map[string]pluginapi.Plugin{"fake": plugin}
 
@@ -1075,7 +989,7 @@ func TestServerPersistsAndReusesConnectedPluginClient(t *testing.T) {
 }
 
 func TestConnectionStatusEndpointTracksPooledLeases(t *testing.T) {
-	server, _ := newServer()
+	server := mustServer(t)
 	defer server.connections.Close()
 	plugin := &fakePlugin{}
 	server.plugins = map[string]pluginapi.Plugin{"fake": plugin}
@@ -1107,7 +1021,7 @@ func TestConnectionStatusEndpointTracksPooledLeases(t *testing.T) {
 }
 
 func TestBrowserSessionsHaveIndependentPoolLeases(t *testing.T) {
-	server, _ := newServer()
+	server := mustServer(t)
 	defer server.connections.Close()
 	plugin := &fakePlugin{}
 	server.plugins = map[string]pluginapi.Plugin{"fake": plugin}
@@ -1184,25 +1098,8 @@ func TestSelectingAnyListedConnectionImmediatelyConnects(t *testing.T) {
 	}
 }
 
-func TestIconPickerHoverDoesNotCoverPluginLogos(t *testing.T) {
-	stylesheet, err := os.ReadFile("static/style.css")
-	if err != nil {
-		t.Fatal(err)
-	}
-	css := string(stylesheet)
-	for _, expected := range []string{
-		".custom-select-icon .custom-select-trigger:hover:not(:disabled)",
-		".custom-select-icon .custom-select-trigger[aria-expanded=\"true\"]",
-		"background: transparent;",
-	} {
-		if !strings.Contains(css, expected) {
-			t.Fatalf("icon picker hover protection is missing %q", expected)
-		}
-	}
-}
-
 func TestPresetRequestsRequireExplicitConnect(t *testing.T) {
-	server, _ := newServer()
+	server := mustServer(t)
 	plugin := &fakePlugin{options: []pluginapi.Option{{Value: "users", Label: "users"}}}
 	server.plugins = map[string]pluginapi.Plugin{"fake": plugin}
 	values := url.Values{
@@ -1246,7 +1143,7 @@ func TestPresetRequestsRequireExplicitConnect(t *testing.T) {
 }
 
 func TestPluginOptionsAndStructuredQuery(t *testing.T) {
-	server, _ := newServer()
+	server := mustServer(t)
 	plugin := &fakePlugin{options: []pluginapi.Option{{Value: "users", Label: "users"}}}
 	server.plugins = map[string]pluginapi.Plugin{"fake": plugin}
 
@@ -1268,21 +1165,21 @@ func TestPluginOptionsAndStructuredQuery(t *testing.T) {
 }
 
 func TestUnknownPluginRendersErrorContract(t *testing.T) {
-	server, _ := newServer()
+	server := mustServer(t)
 	request := httptest.NewRequest(http.MethodPost, "/query", strings.NewReader("tool=missing&query=LOOKUP"))
 	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	response := httptest.NewRecorder()
 	server.ServeHTTP(response, request)
-	if response.Code != http.StatusOK || response.Header().Get("X-PluginVM-Result") != "error" || !strings.Contains(response.Body.String(), "unknown plugin") {
+	if response.Code != http.StatusOK || response.Header().Get("X-Orby-Result") != "error" || !strings.Contains(response.Body.String(), "unknown plugin") {
 		t.Fatalf("response = %d %#v %s", response.Code, response.Header(), response.Body.String())
 	}
 }
 
 func TestRenderBlockPreservesHTMXAndEscaping(t *testing.T) {
-	server, _ := newServer()
+	server := mustServer(t)
 	tool, _ := server.metadataFor("aerospike")
 	response := httptest.NewRecorder()
-	server.writeQueryResult(response, tool, queryResult{Tool: "aerospike", Query: "SELECT * FROM t.s", Format: "json", Profile: "Local <app>", Rows: []map[string]any{{"z": []any{1, true}, "a": "<safe>"}}, State: map[string]string{"namespace": "t", "set": "s"}, Succeeded: true}, "success")
+	server.writeQueryResult(response, tool, queryRequest{}, queryResult{Tool: "aerospike", Query: "SELECT * FROM t.s", Format: "json", Profile: "Local <app>", Rows: []map[string]any{{"z": []any{1, true}, "a": "<safe>"}}, State: map[string]string{"namespace": "t", "set": "s"}, Succeeded: true}, "success")
 	body := response.Body.String()
 	for _, expected := range []string{`hx-swap-oob="beforeend:#output-area"`, `data-result-status="success"`, `data-state=`, `Local &lt;app&gt;`, `class="virtual-output"`, `data-virtual-kind="json"`, `\u003csafe\u003e`} {
 		if !strings.Contains(body, expected) {
@@ -1298,7 +1195,7 @@ func TestRenderBlockPreservesHTMXAndEscaping(t *testing.T) {
 }
 
 func TestRenderBlockUsesStructuredJSONValue(t *testing.T) {
-	data := blockFor(toolMetadata{Name: "redis"}, queryResult{
+	data := blockFor(toolMetadata{Name: "redis"}, queryRequest{}, queryResult{
 		Tool: "redis", Query: "MGET first second", Format: "json",
 		JSONValue: []any{"first", map[string]any{"name": "Ada"}}, HasJSONValue: true, Succeeded: true,
 	})
@@ -1312,7 +1209,7 @@ func TestRenderBlockUsesStructuredJSONValue(t *testing.T) {
 }
 
 func TestRenderBlockShowsResultCountOnlyWhenAvailable(t *testing.T) {
-	counted := blockFor(toolMetadata{Name: "aerospike"}, queryResult{
+	counted := blockFor(toolMetadata{Name: "aerospike"}, queryRequest{}, queryResult{
 		Tool: "aerospike", Query: "SELECT * FROM test.users", Format: "table",
 		Rows: []map[string]any{{"name": "Ada"}, {"name": "Grace"}}, RowCount: 2, HasCount: true, Succeeded: true,
 	})
@@ -1320,19 +1217,16 @@ func TestRenderBlockShowsResultCountOnlyWhenAvailable(t *testing.T) {
 		t.Fatalf("count label = %q", counted.CountLabel)
 	}
 
-	scalar := blockFor(toolMetadata{Name: "redis"}, queryResult{
+	scalar := blockFor(toolMetadata{Name: "redis"}, queryRequest{}, queryResult{
 		Tool: "redis", Query: "GET greeting", Format: "raw", Raw: "hello", IsRaw: true, Succeeded: true,
 	})
 	if scalar.CountLabel != "" {
 		t.Fatalf("scalar count label = %q", scalar.CountLabel)
 	}
 
-	server, err := newServer()
-	if err != nil {
-		t.Fatal(err)
-	}
+	server := mustServer(t)
 	response := httptest.NewRecorder()
-	server.writeQueryResult(response, toolMetadata{Name: "aerospike"}, queryResult{
+	server.writeQueryResult(response, toolMetadata{Name: "aerospike"}, queryRequest{}, queryResult{
 		Tool: "aerospike", Query: "SELECT * FROM test.users", Format: "table", RowCount: 0, HasCount: true, Succeeded: true,
 	}, "success")
 	if !strings.Contains(response.Body.String(), `class="cmd-count">0 records</span>`) {
@@ -1341,7 +1235,7 @@ func TestRenderBlockShowsResultCountOnlyWhenAvailable(t *testing.T) {
 }
 
 func TestTableUsesCompactJSONForNestedValues(t *testing.T) {
-	data := blockFor(toolMetadata{Name: "redis"}, queryResult{
+	data := blockFor(toolMetadata{Name: "redis"}, queryRequest{}, queryResult{
 		Tool: "redis", Query: "GET campaign", Format: "table",
 		Rows: []map[string]any{{
 			"campaign_id":    "CMP471746",
@@ -1355,6 +1249,33 @@ func TestTableUsesCompactJSONForNestedValues(t *testing.T) {
 	}
 	if !reflect.DeepEqual(output.Heads, []string{"campaign_id", "placement_bids"}) || !reflect.DeepEqual(output.Rows, [][]string{{"CMP471746", `[{"cpc":205,"placement":"SEARCH"}]`}}) {
 		t.Fatalf("heads=%#v rows=%#v", output.Heads, output.Rows)
+	}
+}
+
+func TestBlockCarriesConnectionIdentityForRerun(t *testing.T) {
+	server := mustServer(t)
+	tool, _ := server.metadataFor("redis")
+	response := httptest.NewRecorder()
+	server.writeQueryResult(response, tool, queryRequest{
+		ConnectionID: "preset:redis-local", LeaseID: "sess:preset:redis-local",
+		ConnectionName: "redis-local", Host: "127.0.0.1", Port: "6379", Mode: "single",
+		Fields: map[string]string{"dbIndex": "2"},
+	}, queryResult{
+		Tool: "redis", Query: "GET greeting", Format: "raw", Raw: "hello", IsRaw: true, Succeeded: true,
+	}, "success")
+	body := response.Body.String()
+	for _, expected := range []string{
+		`data-connection-id="preset:redis-local"`,
+		`data-lease-id="sess:preset:redis-local"`,
+		`data-connection-name="redis-local"`,
+		`data-host="127.0.0.1"`,
+		`data-port="6379"`,
+		`data-mode="single"`,
+		`data-fields=` + `'` + `{&#34;dbIndex&#34;:&#34;2&#34;}` + `'`,
+	} {
+		if !strings.Contains(body, expected) {
+			t.Fatalf("block is missing %q in %s", expected, body)
+		}
 	}
 }
 
@@ -1386,12 +1307,12 @@ func TestPluginFields(t *testing.T) {
 }
 
 func TestConnectionAddresses(t *testing.T) {
-	got, err := connectionAddresses("one:3100, two, [::1]:3200", "3000", "cluster")
-	want := []address{{Host: "one", Port: 3100}, {Host: "two", Port: 3000}, {Host: "::1", Port: 3200}}
+	got, err := pluginapi.ParseSeeds("one:3100, two, [::1]:3200", "3000", "connection")
+	want := []pluginapi.Address{{Host: "one", Port: 3100}, {Host: "two", Port: 3000}, {Host: "::1", Port: 3200}}
 	if err != nil || !reflect.DeepEqual(got, want) {
 		t.Fatalf("addresses = %#v, %v", got, err)
 	}
-	if formatAddress(address{Host: "::1", Port: 3000}) != "[::1]:3000" {
+	if net.JoinHostPort("::1", "3000") != "[::1]:3000" {
 		t.Fatal("IPv6 formatting changed")
 	}
 }

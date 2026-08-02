@@ -1,4 +1,5 @@
-import { chunkText, fitHeight, previewText, tableText, visibleRange } from "./virtual_output.mjs";
+import { chunkText, previewText, tableText, visibleRange, highlightJson } from "./virtual_output.mjs";
+import { escapeHTML, copyToClipboard } from "./app_utils.mjs";
 
 export function scheduleVirtualRender(model) {
   if (model.renderPending) return;
@@ -12,7 +13,7 @@ function scrollbarHeight(viewport) {
 
 export function virtualHeight(contentHeight, expanded, viewportHeight = globalThis.innerHeight) {
   const limit = expanded ? viewportHeight * .7 : 260;
-  return fitHeight(contentHeight, limit);
+  return Math.min(Math.max(0, contentHeight), Math.max(0, limit));
 }
 
 export function adjustViewportForScrollbar(model, expanded = false) {
@@ -23,6 +24,32 @@ export function adjustViewportForScrollbar(model, expanded = false) {
   }
 }
 
+export function jsonLineStructure(items) {
+  const structure = items.map(() => ({ opens: false, closeIndex: -1 }));
+  const stack = [];
+  items.forEach((line, index) => {
+    const trimmed = line.trim();
+    if (trimmed.endsWith("{") || trimmed.endsWith("[")) {
+      structure[index].opens = true;
+      stack.push(index);
+    } else if ((trimmed.startsWith("}") || trimmed.startsWith("]")) && stack.length) {
+      structure[stack.pop()].closeIndex = index;
+    }
+  });
+  return structure;
+}
+
+export function visibleJsonLines(structure, collapsed) {
+  const visible = [];
+  for (let index = 0; index < structure.length; index++) {
+    visible.push(index);
+    if (structure[index].opens && collapsed.has(index) && structure[index].closeIndex > index) {
+      index = structure[index].closeIndex;
+    }
+  }
+  return visible;
+}
+
 export function createTextModel(root, payload) {
   const viewport = root.querySelector(".virtual-scroll");
   const items = chunkText(payload.text || "");
@@ -31,21 +58,62 @@ export function createTextModel(root, payload) {
   const content = document.createElement("pre");
   canvas.className = "virtual-text-canvas";
   content.className = `virtual-text-content ${payload.kind === "error" ? "err-out" : payload.kind === "json" ? "json-out" : "raw-out"}`;
-  const contentHeight = Math.max(itemHeight, items.length * itemHeight);
   const scrollbarBuffer = 20;
-  canvas.style.height = `${contentHeight + scrollbarBuffer}px`;
+  const structure = payload.kind === "json" ? jsonLineStructure(items) : null;
+  const collapsed = new Set();
+  const computeVisible = () => structure ? visibleJsonLines(structure, collapsed) : items.map((_, index) => index);
+  let visibleLines = computeVisible();
+  let contentHeight = Math.max(itemHeight, visibleLines.length * itemHeight) + scrollbarBuffer;
+  canvas.style.height = `${contentHeight}px`;
   canvas.style.width = `${Math.max(1, items.reduce((longest, line) => Math.max(longest, line.length), 0) * 7.3 + 20)}px`;
   canvas.append(content);
   viewport.classList.add("virtual-text-scroll");
   viewport.append(canvas);
   const model = {
-    viewport, contentHeight: contentHeight + scrollbarBuffer, copyText: () => payload.text || "",
+    viewport, contentHeight, copyText: () => payload.text || "",
+    toggleCollapse(index) {
+      if (!structure || !structure[index]?.opens) return;
+      if (collapsed.has(index)) collapsed.delete(index); else collapsed.add(index);
+      visibleLines = computeVisible();
+      contentHeight = Math.max(itemHeight, visibleLines.length * itemHeight) + scrollbarBuffer;
+      model.contentHeight = contentHeight;
+      canvas.style.height = `${contentHeight}px`;
+      const expanded = viewport.closest(".cmd-output")?.classList.contains("expanded") || false;
+      viewport.style.height = `${virtualHeight(contentHeight, expanded)}px`;
+      adjustViewportForScrollbar(model, expanded);
+      scheduleVirtualRender(model);
+    },
     render() {
-      const range = visibleRange(items.length, itemHeight, viewport.scrollTop, viewport.clientHeight);
+      const range = visibleRange(visibleLines.length, itemHeight, viewport.scrollTop, viewport.clientHeight);
       content.style.transform = `translateY(${range.start * itemHeight}px)`;
-      content.textContent = items.slice(range.start, range.end).join("\n");
+      if (structure) {
+        const html = [];
+        for (let position = range.start; position < range.end; position++) {
+          const index = visibleLines[position];
+          const line = items[index];
+          const info = structure[index];
+          if (info.opens) {
+            const isCollapsed = collapsed.has(index);
+            const closer = line.trimEnd().endsWith("{") ? "}" : "]";
+            const summary = isCollapsed ? `${line} … ${closer}` : line;
+            const toggle = `<button type="button" class="json-toggle" data-line="${index}" aria-expanded="${!isCollapsed}" aria-label="${isCollapsed ? "Expand" : "Collapse"}">${isCollapsed ? "▸" : "▾"}</button>`;
+            html.push(`${toggle}${highlightJson(summary)}`);
+          } else {
+            html.push(`<span class="json-toggle-spacer"></span>${highlightJson(line)}`);
+          }
+        }
+        content.innerHTML = html.join("\n");
+      } else {
+        content.textContent = visibleLines.slice(range.start, range.end).map((index) => items[index]).join("\n");
+      }
     },
   };
+  if (structure) {
+    content.addEventListener("click", (event) => {
+      const toggle = event.target.closest(".json-toggle");
+      if (toggle) model.toggleCollapse(Number(toggle.dataset.line));
+    });
+  }
   viewport.addEventListener("scroll", () => scheduleVirtualRender(model), { passive: true });
   const resizeObserver = new ResizeObserver(() => scheduleVirtualRender(model));
   resizeObserver.observe(viewport);
@@ -86,7 +154,7 @@ function openCellPopup(columnName, value) {
           <button class="cell-popup-close" title="Close" aria-label="Close">${ICON_CLOSE}</button>
         </div>
       </div>
-      <div class="cell-popup-body"><pre class="cell-popup-pre${isJson ? " is-json" : ""}">${displayText === null ? "<span class='cell-popup-null'>NULL</span>" : escapeHtml(displayText)}</pre></div>
+      <div class="cell-popup-body"><pre class="cell-popup-pre${isJson ? " is-json" : ""}">${displayText === null ? "<span class='cell-popup-null'>NULL</span>" : escapeHTML(displayText)}</pre></div>
     </div>`;
   const close = () => overlay.remove();
   overlay.addEventListener("click", (e) => { if (e.target === overlay) close(); });
@@ -122,31 +190,12 @@ function openCellPopup(columnName, value) {
   overlay.querySelector(".cell-popup").focus();
 }
 
-function escapeHtml(str) {
-  return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-}
-
-async function copyToClipboard(text) {
-  try { await navigator.clipboard.writeText(text); }
-  catch {
-    const textarea = document.createElement("textarea");
-    textarea.value = text;
-    textarea.style.cssText = "position:fixed;left:-9999px;top:-9999px;opacity:0";
-    document.body.append(textarea);
-    document.activeElement?.blur();
-    textarea.focus();
-    textarea.select();
-    document.execCommand("copy");
-    textarea.remove();
-  }
-}
-
 export function createTableModel(root, payload) {
   const viewport = root.querySelector(".virtual-scroll");
   const heads = Array.isArray(payload.heads) ? payload.heads : [];
   const rows = Array.isArray(payload.rows) ? payload.rows : [];
-  const rowHeight = 34;
-  const headerHeight = 32;
+  const rowHeight = 30;
+  const headerHeight = 30;
   const minimumColumnWidth = 180;
   const canvas = document.createElement("div");
   const header = document.createElement("div");
@@ -215,6 +264,82 @@ export function createTableModel(root, payload) {
       }
       cells.replaceChildren(cellFragment);
     },
+  };
+  viewport.addEventListener("scroll", () => scheduleVirtualRender(model), { passive: true });
+  const resizeObserver = new ResizeObserver(() => scheduleVirtualRender(model));
+  resizeObserver.observe(viewport);
+  model.destroy = () => resizeObserver.disconnect();
+  return model;
+}
+
+export function browseTTL(seconds) {
+  if (!seconds || seconds < 0) return "";
+  if (seconds < 60) return `${seconds}s`;
+  if (seconds < 3600) return `${Math.floor(seconds / 60)}m`;
+  return `${Math.floor(seconds / 3600)}h`;
+}
+
+const BROWSE_INSPECT = { string: "GET", hash: "HGETALL", list: "LRANGE", set: "SMEMBERS", zset: "ZRANGE" };
+
+function quoteRedisArg(name) {
+  const text = String(name);
+  if (/^[A-Za-z0-9_.:*-]+$/.test(text)) return text;
+  return `"${text.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
+}
+
+export function browseInspectCommand(type, name) {
+  const base = BROWSE_INSPECT[type];
+  if (!base) return "";
+  const tail = type === "list" || type === "zset" ? " 0 -1" : "";
+  return `${base} ${quoteRedisArg(name)}${tail}`;
+}
+
+export function browseCopyText(view) {
+  const notes = [];
+  if (view.limited) notes.push("scan limited");
+  if (view.cluster) notes.push("cluster-wide");
+  const suffix = notes.length ? ` (${notes.join(", ")})` : "";
+  const lines = [`BROWSE ${view.pattern || "*"}`, `${view.scanned} keys scanned${suffix}`];
+  for (const group of view.groups || []) {
+    lines.push(`${group.prefix} (${group.total} keys)`);
+    for (const key of group.keys) {
+      const ttl = browseTTL(key.ttl);
+      lines.push(`  ${key.name} [${key.type || "?"}]${ttl ? ` (${ttl})` : ""}`);
+    }
+  }
+  return lines.join("\n");
+}
+
+function browseGroupHTML(group, index) {
+  const rows = group.keys.map((key) => {
+    const command = browseInspectCommand(key.type, key.name);
+    const inspect = command ? ` data-inspect="${escapeHTML(command)}"` : "";
+    const badge = key.type ? `<span class="kbt-type kbt-${escapeHTML(key.type)}">${escapeHTML(key.type)}</span>` : "";
+    const ttl = browseTTL(key.ttl) ? `<span class="kbt-ttl">${escapeHTML(browseTTL(key.ttl))}</span>` : "";
+    return `<div class="browse-key" role="button" tabindex="0"${inspect}><span class="browse-key-name">${escapeHTML(key.name)}</span>${badge}${ttl}</div>`;
+  }).join("");
+  const more = group.total > group.keys.length ? `<div class="browse-more">+${group.total - group.keys.length} more</div>` : "";
+  const open = index === 0 ? " open" : "";
+  return `<details class="browse-group"${open}><summary class="browse-group-head"><span class="browse-chevron" aria-hidden="true"></span><span class="browse-group-prefix">${escapeHTML(group.prefix)}</span><span class="browse-group-count">${group.total} key${group.total === 1 ? "" : "s"}</span></summary><div class="browse-group-keys">${rows}${more}</div></details>`;
+}
+
+export function createBrowseModel(root, payload) {
+  const viewport = root.querySelector(".virtual-scroll");
+  const view = payload.browse || { pattern: "*", groups: [], scanned: 0, limited: false };
+  const canvas = document.createElement("div");
+  canvas.className = "virtual-browse-canvas";
+  const groups = (view.groups || []).map(browseGroupHTML).join("");
+  const warn = view.limited ? `<span class="browse-warn">scan limited — narrow the pattern or raise LIMIT</span>` : "";
+  const cluster = view.cluster ? `<span class="browse-cluster">cluster-wide</span>` : "";
+  const stats = `<div class="browse-stats"><span>pattern <b>${escapeHTML(view.pattern)}</b></span><span><b>${view.scanned}</b> keys scanned</span>${cluster}${warn}</div>`;
+  canvas.innerHTML = `${stats}<div class="browse-tree">${groups}</div>`;
+  viewport.classList.add("virtual-browse-scroll");
+  viewport.append(canvas);
+  const contentHeight = Math.max(60, canvas.scrollHeight + 20);
+  const model = {
+    viewport, contentHeight,
+    copyText: () => browseCopyText(view),
+    render() {},
   };
   viewport.addEventListener("scroll", () => scheduleVirtualRender(model), { passive: true });
   const resizeObserver = new ResizeObserver(() => scheduleVirtualRender(model));

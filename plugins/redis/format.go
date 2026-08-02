@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+
+	"orby/plugins"
 )
 
 func redisCollectionCount(value any) (int, bool) {
@@ -19,55 +21,21 @@ func redisCollectionCount(value any) (int, bool) {
 }
 
 func redisJSON(value any) any {
-	switch value := value.(type) {
-	case string:
+	return plugins.WalkJSON(value, func(item any) any {
+		text, ok := item.(string)
+		if !ok {
+			if raw, isBytes := item.([]byte); isBytes {
+				text = string(raw)
+			} else {
+				return item
+			}
+		}
 		var decoded any
-		if json.Unmarshal([]byte(value), &decoded) == nil {
+		if json.Unmarshal([]byte(text), &decoded) == nil {
 			return decoded
 		}
-		return value
-	case []any:
-		items := make([]any, len(value))
-		for index, item := range value {
-			items[index] = redisJSON(item)
-		}
-		return items
-	case map[string]any:
-		items := make(map[string]any, len(value))
-		for key, item := range value {
-			items[key] = redisJSON(item)
-		}
-		return items
-	default:
-		return value
-	}
-}
-
-func normalizeRedis(value any) any {
-	switch value := value.(type) {
-	case []byte:
-		return string(value)
-	case []any:
-		output := make([]any, len(value))
-		for index, item := range value {
-			output[index] = normalizeRedis(item)
-		}
-		return output
-	case map[any]any:
-		output := map[string]any{}
-		for key, item := range value {
-			output[fmt.Sprint(normalizeRedis(key))] = normalizeRedis(item)
-		}
-		return output
-	case map[string]any:
-		output := map[string]any{}
-		for key, item := range value {
-			output[key] = normalizeRedis(item)
-		}
-		return output
-	default:
-		return value
-	}
+		return text
+	})
 }
 
 func redisRows(value any) []map[string]any {
@@ -93,6 +61,8 @@ func redisRaw(value any) string {
 	switch value := value.(type) {
 	case nil:
 		return ""
+	case []byte:
+		return string(value)
 	case []any:
 		items := make([]string, len(value))
 		for index, item := range value {

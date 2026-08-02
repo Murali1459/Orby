@@ -5,7 +5,7 @@ import (
 	"strings"
 	"time"
 
-	"pluginvm/plugins"
+	"orby/plugins"
 )
 
 type address = plugins.Address
@@ -21,10 +21,11 @@ func (Plugin) Metadata() plugins.Metadata {
 		Name: "redis", Label: "Redis", Badge: "REDIS", ColorClass: "tool-redis", Icon: "/static/icons/redis.svg",
 		DefaultFormat: "raw", Formats: []string{"json", "table", "raw"},
 		Composer: plugins.Composer{Elements: []plugins.ComposerElement{
-			{Kind: "literal", Text: "❯"},
+			{Kind: "literal", Text: "❯", Decorative: true},
 			{Kind: "input", Name: "query", Placeholder: "Enter Redis command", Grow: true},
 		}},
-		Fields: []plugins.Field{{Label: "DB Index", Key: "dbIndex", Default: "0", InputType: "number"}},
+		Fields:   []plugins.Field{{Label: "DB Index", Key: "dbIndex", Default: "0", InputType: "number"}},
+		Commands: redisCommands,
 	}
 }
 
@@ -37,7 +38,7 @@ func (Plugin) Connect(request plugins.Request) (plugins.Connection, error) {
 	if cluster && db != 0 {
 		return nil, fmt.Errorf("redis cluster supports DB index 0 only")
 	}
-	addresses, err := parseRedisAddresses(request.Host, request.Port)
+	addresses, err := plugins.ParseSeeds(request.Host, request.Port, "Redis")
 	if err != nil {
 		return nil, err
 	}
@@ -70,16 +71,18 @@ func runRedisWithClient(request queryRequest, client redisClient) (queryResult, 
 	if format == "" {
 		format = "raw"
 	}
-	if format != "json" && format != "table" && format != "raw" {
+	if format != "json" && format != "table" && format != "raw" && format != "browse" {
 		return queryResult{}, fmt.Errorf("unsupported Redis format %q", format)
+	}
+	if strings.EqualFold(tokens[0], "BROWSE") {
+		return runBrowse(client, request)
 	}
 	value, err := client.Execute(tokens)
 	if err != nil {
 		return queryResult{}, err
 	}
-	value = normalizeRedis(value)
 	jsonValue := redisJSON(value)
-	result := queryResult{Tool: "redis", Query: request.Query, Format: format, Profile: plugins.ProfileName(request.ConnectionName), DurationMS: time.Since(started).Milliseconds(), State: map[string]string{"query": request.Query}, Succeeded: true}
+	result := queryResult{Tool: "redis", Query: request.Query, Format: format, Profile: plugins.ProfileName(request.ConnectionName), DurationMS: time.Since(started).Milliseconds(), State: map[string]string{"query": request.Query}, Succeeded: true, CountUnit: "item"}
 	result.RowCount, result.HasCount = redisCollectionCount(jsonValue)
 	switch format {
 	case "table":

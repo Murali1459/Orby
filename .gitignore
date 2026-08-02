@@ -1,0 +1,7 @@
+/tmp/
+/dist/
+/pluginvm
+*.log
+
+/orby
+/.playwright-mcp/

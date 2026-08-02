@@ -2,7 +2,9 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"strconv"
 	"strings"
@@ -33,6 +35,9 @@ type presetConnection struct {
 func loadPresetConfig(path string, knownTools map[string]bool) (presetConfig, error) {
 	file, err := os.Open(path)
 	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return presetConfig{}, nil
+		}
 		return presetConfig{}, fmt.Errorf("load preset connections: %w", err)
 	}
 	defer file.Close()
@@ -41,6 +46,9 @@ func loadPresetConfig(path string, knownTools map[string]bool) (presetConfig, er
 	decoder := json.NewDecoder(file)
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&config); err != nil {
+		if errors.Is(err, io.EOF) {
+			return presetConfig{}, nil
+		}
 		return presetConfig{}, fmt.Errorf("load preset connections: %w", err)
 	}
 	if err := validatePresetConfig(&config, knownTools); err != nil {

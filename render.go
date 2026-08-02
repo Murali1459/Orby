@@ -10,12 +10,14 @@ import (
 	"strings"
 	"time"
 
-	pluginapi "pluginvm/plugins"
+	pluginapi "orby/plugins"
 )
 
 type blockData struct {
 	ToolName, ToolClass, ToolBadge, Query, Profile, Format, FormatLabel string
 	StatusLabel, ResultStatus, Timestamp, StateJSON, VirtualKind        string
+	ConnectionID, LeaseID, ConnectionName, Host, Port, Mode             string
+	FieldsJSON                                                          string
 	CountLabel                                                          string
 	DurationMS                                                          int64
 	IsError                                                             bool
@@ -23,27 +25,28 @@ type blockData struct {
 }
 
 type virtualOutput struct {
-	Kind  string     `json:"kind"`
-	Text  string     `json:"text,omitempty"`
-	Heads []string   `json:"heads,omitempty"`
-	Rows  [][]string `json:"rows,omitempty"`
+	Kind   string                 `json:"kind"`
+	Text   string                 `json:"text,omitempty"`
+	Heads  []string               `json:"heads,omitempty"`
+	Rows   [][]string             `json:"rows,omitempty"`
+	Browse *pluginapi.BrowseView  `json:"browse,omitempty"`
 }
 
-func (server *server) writeQueryResult(writer http.ResponseWriter, tool toolMetadata, result queryResult, status string) {
-	data := blockFor(tool, result)
+func (server *server) writeQueryResult(writer http.ResponseWriter, tool toolMetadata, request queryRequest, result queryResult, status string) {
+	data := blockFor(tool, request, result)
 	var output bytes.Buffer
 	if err := server.blockTemplate.ExecuteTemplate(&output, "cmd_block.html", data); err != nil {
 		http.Error(writer, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	writer.Header().Set("Content-Type", "text/html; charset=utf-8")
-	writer.Header().Set("X-PluginVM-Result", status)
+	writer.Header().Set("X-Orby-Result", status)
 	writer.Write(output.Bytes())
 }
 
-func blockFor(tool toolMetadata, result queryResult) blockData {
+func blockFor(tool toolMetadata, request queryRequest, result queryResult) blockData {
 	format := strings.ToLower(strings.TrimSpace(result.Format))
-	if result.Error == "" && format != "json" && format != "table" && format != "raw" {
+	if result.Error == "" && format != "json" && format != "table" && format != "raw" && format != "browse" {
 		if result.IsRaw {
 			format = "raw"
 		} else {
@@ -56,6 +59,10 @@ func blockFor(tool toolMetadata, result queryResult) blockData {
 		state = map[string]string{}
 	}
 	encodedState, _ := json.Marshal(state)
+	fields, _ := json.Marshal(request.Fields)
+	if len(fields) == 0 {
+		fields = []byte("{}")
+	}
 	statusLabel, resultStatus := "SUCCESS", "success"
 	if isError {
 		statusLabel, resultStatus = "ERROR", "error"
@@ -64,6 +71,8 @@ func blockFor(tool toolMetadata, result queryResult) blockData {
 	switch {
 	case isError:
 		payload.Kind, payload.Text = "error", result.Error
+	case format == "browse":
+		payload.Browse = result.Browse
 	case format == "table":
 		payload.Heads, payload.Rows = tableData(result.Rows)
 	case format == "raw":
@@ -73,23 +82,23 @@ func blockFor(tool toolMetadata, result queryResult) blockData {
 		if result.HasJSONValue {
 			value = result.JSONValue
 		}
-		encoded, err := marshalPrettyJSON(value)
+		encoded, err := pluginapi.MarshalJSON(value, "  ")
 		if err != nil {
 			encoded = []byte(err.Error())
 		}
 		payload.Text = string(encoded)
 	}
 	outputJSON, _ := json.Marshal(payload)
-	return blockData{ToolName: tool.Name, ToolClass: tool.ColorClass, ToolBadge: tool.Badge, Query: result.Query, Profile: pluginapi.ProfileName(result.Profile), Format: format, FormatLabel: strings.ToUpper(format), StatusLabel: statusLabel, ResultStatus: resultStatus, Timestamp: time.Now().Format("15:04:05"), StateJSON: string(encodedState), VirtualKind: payload.Kind, CountLabel: resultCountLabel(result, isError), DurationMS: result.DurationMS, IsError: isError, OutputJSON: template.JS(outputJSON)}
+	return blockData{ToolName: tool.Name, ToolClass: tool.ColorClass, ToolBadge: tool.Badge, Query: result.Query, Profile: pluginapi.ProfileName(result.Profile), Format: format, FormatLabel: strings.ToUpper(format), StatusLabel: statusLabel, ResultStatus: resultStatus, Timestamp: time.Now().Format("15:04:05"), StateJSON: string(encodedState), ConnectionID: request.ConnectionID, LeaseID: request.LeaseID, ConnectionName: request.ConnectionName, Host: request.Host, Port: request.Port, Mode: request.Mode, FieldsJSON: string(fields), VirtualKind: payload.Kind, CountLabel: resultCountLabel(result, isError), DurationMS: result.DurationMS, IsError: isError, OutputJSON: template.JS(outputJSON)}
 }
 
 func resultCountLabel(result queryResult, isError bool) string {
 	if isError || !result.HasCount {
 		return ""
 	}
-	unit := "record"
-	if result.Tool == "redis" {
-		unit = "item"
+	unit := result.CountUnit
+	if unit == "" {
+		unit = "record"
 	}
 	if result.RowCount != 1 {
 		unit += "s"
@@ -125,20 +134,9 @@ func tableData(rows []map[string]any) ([]string, [][]string) {
 func tableValue(value any) string {
 	switch value.(type) {
 	case map[string]any, []any:
-		if encoded, err := pluginapi.MarshalJSON(value); err == nil {
+		if encoded, err := pluginapi.MarshalJSON(value, ""); err == nil {
 			return string(encoded)
 		}
 	}
 	return fmt.Sprint(value)
-}
-
-func marshalPrettyJSON(value any) ([]byte, error) {
-	var output bytes.Buffer
-	encoder := json.NewEncoder(&output)
-	encoder.SetEscapeHTML(false)
-	encoder.SetIndent("", "  ")
-	if err := encoder.Encode(value); err != nil {
-		return nil, err
-	}
-	return bytes.TrimSuffix(output.Bytes(), []byte("\n")), nil
 }

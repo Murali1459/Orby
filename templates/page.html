@@ -4,6 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Orby</title>
+  <link rel="stylesheet" href="/static/style.css">
   <link rel="icon" href="/static/icons/orby.svg" type="image/svg+xml">
   <script>
     try {
@@ -14,10 +15,10 @@
       }
     } catch { /* Storage is optional. */ }
   </script>
-  <script src="https://unpkg.com/htmx.org@1.9.12"></script>
-  <link rel="stylesheet" href="/static/style.css?v=orby-controls-1">
+  <script src="https://unpkg.com/htmx.org@2.0.10"></script>
 </head>
 <body>
+  <div class="bg-watermark" aria-hidden="true"><img src="/static/icons/orby.svg" alt=""></div>
   <div class="operator-shell">
     <header class="operator-topbar">
       <a class="operator-brand" href="/" aria-label="Orby home">
@@ -73,6 +74,7 @@
             <div id="plugin-composer" class="plugin-composer" aria-live="polite"></div>
             <label id="composer-format-picker" class="format-picker" title="JSON"><span>Output</span><img id="composer-format-icon" src="/static/icons/braces.svg" alt=""><select id="composer-format" name="format" aria-label="Output format"></select></label>
             <button id="run-query" type="submit">Run</button>
+            <button id="browse-keys" type="button" hidden>Browse</button>
             <input id="form-connection-id" name="connectionId" type="hidden">
             <input id="form-lease-id" name="leaseId" type="hidden">
             <input id="form-connection-name" name="connectionName" type="hidden">
@@ -116,10 +118,9 @@
   </div>
 
   <script>
-    window.PLUGINVM_TOOLS = {{.ToolsJSON}};
+    window.ORBY_TOOLS = {{.ToolsJSON}};
     window.ORBY_PRESET_CONFIG = {{.PresetsJSON}};
   </script>
-  <script type="module" src="/static/virtual_output.mjs?v=ux-a11y-2"></script>
-  <script type="module" src="/static/app.js?v=orby-controls-1"></script>
+  <script type="module" src="/static/app.js"></script>
 </body>
 </html>

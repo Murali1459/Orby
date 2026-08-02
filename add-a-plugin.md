@@ -31,7 +31,7 @@ A minimal plugin starts like this:
 ```go
 package example
 
-import "pluginvm/plugins"
+import "orby/plugins"
 
 type Plugin struct{}
 
@@ -141,7 +141,7 @@ For dependent dropdowns, set `DependsOn` to the name of the controlling composer
 Import the package in `server.go` and add its constructor to the registry in `newServer`:
 
 ```go
-exampleplugin "pluginvm/plugins/example"
+exampleplugin "orby/plugins/example"
 
 for _, plugin := range []pluginapi.Plugin{
     aerospikeplugin.New(),

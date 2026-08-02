@@ -4,7 +4,7 @@ import (
 	"time"
 
 	as "github.com/aerospike/aerospike-client-go/v8"
-	"pluginvm/plugins"
+	"orby/plugins"
 )
 
 type nativeClient struct{ client *as.Client }
@@ -53,5 +53,7 @@ func (client *nativeClient) Info(command string) ([]string, error) {
 	}
 	return values, nil
 }
+
+func (client *nativeClient) IsConnected() bool { return client.client.IsConnected() }
 
 func (client *nativeClient) Close() { client.client.Close() }

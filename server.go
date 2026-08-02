@@ -10,9 +10,9 @@ import (
 	"strings"
 	"time"
 
-	pluginapi "pluginvm/plugins"
-	aerospikeplugin "pluginvm/plugins/aerospike"
-	redisplugin "pluginvm/plugins/redis"
+	pluginapi "orby/plugins"
+	aerospikeplugin "orby/plugins/aerospike"
+	redisplugin "orby/plugins/redis"
 )
 
 type server struct {
@@ -53,6 +53,10 @@ func newServer() (*server, error) {
 }
 
 func (server *server) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
+	if !requestOriginAllowed(request) {
+		http.Error(writer, "cross-site request rejected", http.StatusForbidden)
+		return
+	}
 	switch {
 	case request.URL.Path == "/":
 		server.index(writer, request)
@@ -81,6 +85,13 @@ func requireMethod(writer http.ResponseWriter, request *http.Request, method str
 	writer.Header().Set("Allow", method)
 	http.Error(writer, "method not allowed", http.StatusMethodNotAllowed)
 	return false
+}
+
+func requestOriginAllowed(request *http.Request) bool {
+	if request.Method != http.MethodPost {
+		return true
+	}
+	return !strings.EqualFold(request.Header.Get("Sec-Fetch-Site"), "cross-site")
 }
 
 func (server *server) index(writer http.ResponseWriter, request *http.Request) {
@@ -115,7 +126,7 @@ func (server *server) toolList() []toolMetadata {
 func (server *server) metadataFor(name string) (toolMetadata, bool) {
 	plugin, ok := server.plugins[name]
 	if !ok {
-		return toolMetadata{Name: name, Badge: "NEW", ColorClass: "tool-future", DefaultFormat: "raw"}, false
+		return toolMetadata{Name: name, DefaultFormat: "raw"}, false
 	}
 	return plugin.Metadata(), true
 }
@@ -128,38 +139,38 @@ func (server *server) query(writer http.ResponseWriter, request *http.Request) {
 		http.Error(writer, err.Error(), http.StatusBadRequest)
 		return
 	}
-	toolName, originalQuery := request.Form.Get("tool"), request.Form.Get("query")
+	toolName := request.Form.Get("tool")
 	tool, known := server.metadataFor(toolName)
+	query := requestFromValues(request.Form)
 	if !known {
-		server.writeQueryError(writer, tool, originalQuery, request.Form.Get("connectionName"), request.Form.Get("format"), fmt.Sprintf("unknown plugin %q", toolName))
+		server.writeQueryError(writer, tool, query, fmt.Sprintf("unknown plugin %q", toolName))
 		return
 	}
 	plugin := server.plugins[toolName]
-	query := requestFromValues(request.Form)
-	key, err := connectionKey(query.Host, query.Port, query.Mode)
+	key, err := connectionKey(toolName, query.Host, query.Port)
 	if err != nil {
-		server.writeQueryError(writer, tool, originalQuery, request.Form.Get("connectionName"), request.Form.Get("format"), err.Error())
+		server.writeQueryError(writer, tool, query, err.Error())
 		return
 	}
-	connection, release, err := server.acquireConnection(key, toolName, query, plugin)
+	connection, release, err := server.acquireConnection(key, query, plugin)
 	if err != nil {
-		server.writeQueryError(writer, tool, originalQuery, request.Form.Get("connectionName"), request.Form.Get("format"), err.Error())
+		server.writeQueryError(writer, tool, query, err.Error())
 		return
 	}
 	defer release()
 	result, err := connection.Run(query)
 	if err != nil {
-		server.writeQueryError(writer, tool, originalQuery, request.Form.Get("connectionName"), request.Form.Get("format"), err.Error())
+		server.writeQueryError(writer, tool, query, err.Error())
 		return
 	}
-	server.writeQueryResult(writer, tool, result, "success")
+	server.writeQueryResult(writer, tool, query, result, "success")
 }
 
-func (server *server) writeQueryError(writer http.ResponseWriter, tool toolMetadata, query, profile, format, message string) {
-	if format == "" {
-		format = tool.DefaultFormat
+func (server *server) writeQueryError(writer http.ResponseWriter, tool toolMetadata, request queryRequest, message string) {
+	if request.Format == "" {
+		request.Format = tool.DefaultFormat
 	}
-	server.writeQueryResult(writer, tool, queryResult{Tool: tool.Name, Query: query, Format: format, Profile: profile, Error: message}, "error")
+	server.writeQueryResult(writer, tool, request, queryResult{Tool: tool.Name, Query: request.Query, Format: request.Format, Profile: request.ConnectionName, Error: message}, "error")
 }
 
 func (server *server) Close() { server.connections.Close() }

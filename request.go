@@ -8,17 +8,16 @@ import (
 	"strconv"
 	"strings"
 
-	pluginapi "pluginvm/plugins"
+	pluginapi "orby/plugins"
 )
 
-type address = pluginapi.Address
 type toolMetadata = pluginapi.Metadata
 type queryRequest = pluginapi.Request
 type queryResult = pluginapi.Result
 
 var reservedFields = map[string]bool{
 	"tool": true, "query": true, "format": true, "connectionId": true, "leaseId": true, "resource": true,
-	"connectionName": true, "host": true, "port": true, "mode": true, "auth": true,
+	"connectionName": true, "host": true, "port": true, "mode": true,
 }
 
 func resolvePort(args []string, environmentPort string) (int, error) {
@@ -65,46 +64,15 @@ func requestLease(request queryRequest) string {
 	return request.ConnectionID
 }
 
-func connectionAddresses(hosts, defaultPort, mode string) ([]address, error) {
-	port, err := strconv.Atoi(strings.TrimSpace(defaultPort))
-	if err != nil || port < 1 || port > 65535 || strings.TrimSpace(hosts) == "" {
-		return nil, fmt.Errorf("valid host and port are required")
-	}
-	rawHosts := []string{hosts}
-	if strings.EqualFold(strings.TrimSpace(mode), "cluster") {
-		rawHosts = strings.Split(hosts, ",")
-	}
-	addresses := make([]address, 0, len(rawHosts))
-	for _, raw := range rawHosts {
-		raw = strings.TrimSpace(raw)
-		if raw == "" {
-			continue
-		}
-		item, err := pluginapi.ParseAddress(raw, port)
-		if err != nil {
-			return nil, err
-		}
-		addresses = append(addresses, item)
-	}
-	if len(addresses) == 0 {
-		return nil, fmt.Errorf("at least one cluster seed is required")
-	}
-	return addresses, nil
-}
-
-func formatAddress(item address) string {
-	return net.JoinHostPort(item.Host, strconv.Itoa(item.Port))
-}
-
-func connectionKey(host, port, mode string) (string, error) {
-	addresses, err := connectionAddresses(host, port, mode)
+func connectionKey(tool, host, port string) (string, error) {
+	addresses, err := pluginapi.ParseSeeds(host, port, "connection")
 	if err != nil {
 		return "", err
 	}
 	labels := make([]string, len(addresses))
 	for index, item := range addresses {
-		labels[index] = strings.ToLower(formatAddress(item))
+		labels[index] = strings.ToLower(net.JoinHostPort(item.Host, strconv.Itoa(item.Port)))
 	}
 	sort.Strings(labels)
-	return strings.Join(labels, ","), nil
+	return tool + ":" + strings.Join(labels, ","), nil
 }

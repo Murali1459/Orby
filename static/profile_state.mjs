@@ -1,4 +1,4 @@
-const storageKey = "pluginvm_collapsed_profiles_v1";
+const storageKey = "orby_collapsed_profiles_v1";
 
 export function loadCollapsedProfiles(storage) {
   try {

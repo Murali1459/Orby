@@ -10,3 +10,18 @@ export function escapeHTML(value) {
 export function sameSet(left, right) {
   return left.size === right.size && [...left].every((value) => right.has(value));
 }
+
+export async function copyToClipboard(text) {
+  try { await navigator.clipboard.writeText(text); }
+  catch {
+    const textarea = document.createElement("textarea");
+    textarea.value = text;
+    textarea.style.cssText = "position:fixed;left:-9999px;top:-9999px;opacity:0";
+    document.body.append(textarea);
+    document.activeElement?.blur();
+    textarea.focus();
+    textarea.select();
+    document.execCommand("copy");
+    textarea.remove();
+  }
+}

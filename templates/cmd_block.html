@@ -1,7 +1,10 @@
 <div hx-swap-oob="beforeend:#output-area">
 <article class="cmd-block{{if .IsError}} cmd-block-error{{end}}"
          data-output-format="{{.Format}}" data-tool="{{.ToolName}}" data-query="{{.Query}}"
-         data-state='{{.StateJSON}}' data-result-status="{{.ResultStatus}}">
+         data-state='{{.StateJSON}}' data-result-status="{{.ResultStatus}}"
+         data-connection-id="{{.ConnectionID}}" data-lease-id="{{.LeaseID}}"
+         data-connection-name="{{.ConnectionName}}" data-host="{{.Host}}"
+         data-port="{{.Port}}" data-mode="{{.Mode}}" data-fields='{{.FieldsJSON}}'>
   <header class="cmd-header">
     <time class="cmd-time">{{.Timestamp}}</time>
     <span class="tool-badge {{.ToolClass}}">{{.ToolBadge}}</span>

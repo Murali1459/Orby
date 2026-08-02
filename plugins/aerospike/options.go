@@ -3,24 +3,17 @@ package aerospike
 import (
 	"fmt"
 	"sort"
-	"strconv"
 	"strings"
 
-	"pluginvm/plugins"
+	"orby/plugins"
 )
 
 func optionsWithClient(request plugins.Request, resource string, client *nativeClient) ([]plugins.Option, error) {
 	namespace := strings.TrimSpace(request.Fields["namespace"])
-	command := resource
-	if resource == "bins" {
-		if namespace == "" {
-			return nil, fmt.Errorf("namespace is required for bins")
-		}
-		command = "bins/" + namespace
-	} else if resource != "namespaces" && resource != "sets" {
+	if resource != "namespaces" && resource != "sets" {
 		return nil, fmt.Errorf("unsupported Aerospike option resource %q", resource)
 	}
-	values, err := client.Info(command)
+	values, err := client.Info(resource)
 	if err != nil {
 		return nil, fmt.Errorf("Aerospike metadata failed: %v", err)
 	}
@@ -55,13 +48,6 @@ func parseOptions(resource, namespace string, values []string) []plugins.Option 
 					unique[fields["set"]] = true
 				}
 			}
-		case "bins":
-			for item := range strings.SplitSeq(raw, ",") {
-				item = strings.TrimSpace(item)
-				if item != "" && !strings.Contains(item, "=") {
-					unique[item] = true
-				}
-			}
 		}
 	}
 	names := make([]string, 0, len(unique))
@@ -74,27 +60,4 @@ func parseOptions(resource, namespace string, values []string) []plugins.Option 
 		options[index] = plugins.Option{Value: name, Label: name}
 	}
 	return options
-}
-
-func parseSeeds(hosts, defaultPort string) ([]plugins.Address, error) {
-	port, err := strconv.Atoi(strings.TrimSpace(defaultPort))
-	if err != nil || port < 1 || port > 65535 {
-		return nil, fmt.Errorf("valid Aerospike port is required")
-	}
-	seeds := []plugins.Address{}
-	for raw := range strings.SplitSeq(hosts, ",") {
-		raw = strings.TrimSpace(raw)
-		if raw == "" {
-			continue
-		}
-		seed, err := plugins.ParseAddress(raw, port)
-		if err != nil {
-			return nil, fmt.Errorf("invalid Aerospike seed")
-		}
-		seeds = append(seeds, seed)
-	}
-	if len(seeds) == 0 {
-		return nil, fmt.Errorf("Aerospike host is required")
-	}
-	return seeds, nil
 }

@@ -7,7 +7,7 @@ import (
 	"strings"
 
 	as "github.com/aerospike/aerospike-client-go/v8"
-	"pluginvm/plugins"
+	"orby/plugins"
 )
 
 type expressionNode struct {
@@ -26,7 +26,6 @@ type command struct {
 	PrimaryKey string
 	Limit      int
 	Metadata   bool
-	Expression *expressionNode
 	Filter     *as.Expression
 }
 
@@ -71,7 +70,7 @@ func parseCommand(request plugins.Request) (command, error) {
 	if err != nil {
 		return command{}, err
 	}
-	value.Expression, value.Filter = &root, filter
+	value.Filter = filter
 	return value, nil
 }
 
