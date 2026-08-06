@@ -888,12 +888,12 @@ function historyGroup(createdAt) {
 
 function renderHistory() {
   let group = "";
-  els.historyPanel.innerHTML = filteredHistory().map(({ item, index }) => {
+  els.historyPanel.innerHTML = filteredHistory().map(({ item }) => {
     const nextGroup = historyGroup(item.createdAt);
     const heading = nextGroup === group ? "" : `<div class="history-group">${nextGroup}</div>`;
     group = nextGroup;
     const meta = [item.connectionName, item.format?.toUpperCase()].filter(Boolean).join(" · ");
-    return `${heading}<button type="button" class="hist-item" data-history-index="${index}"><span class="hist-badge ${escapeHTML(item.tool)}">${escapeHTML(item.tool === "aerospike" ? "AS" : item.tool)}</span><span class="hist-copy"><span class="hist-cmd">${escapeHTML(item.summary)}</span><small>${escapeHTML(meta)}</small></span><span class="hist-load-icon" aria-hidden="true"></span></button>`;
+    return `${heading}<div class="hist-item"><span class="hist-badge ${escapeHTML(item.tool)}">${escapeHTML(item.tool === "aerospike" ? "AS" : item.tool)}</span><span class="hist-copy"><span class="hist-cmd">${escapeHTML(item.summary)}</span><small>${escapeHTML(meta)}</small></span></div>`;
   }).join("") || `<p class="history-empty">No matching commands</p>`;
 }
 
@@ -906,14 +906,7 @@ function addHistory(tool, summary, state) {
   commandHistory.splice(100); renderHistory();
 }
 
-async function restoreHistoryItem(item, submit = false) {
-  if (!tools.some((tool) => tool.name === item.tool)) return;
-  if (els.composerTool.value !== item.tool) { els.composerTool.value = item.tool; await handleToolChange(); }
-  await renderComposer(item.state || {});
-  if (submit) els.queryForm.requestSubmit();
-}
-
-function handleHistoryKey(event) {
+async function handleHistoryKey(event) {
   if (event.key === "Enter") { event.preventDefault(); els.queryForm.requestSubmit(); }
 }
 
@@ -1136,9 +1129,6 @@ els.browseKeys.addEventListener("click", () => {
   els.queryForm.requestSubmit();
 });
 
-els.historyPanel.addEventListener("click", (event) => {
-  const item = event.target.closest("[data-history-index]"); if (item) restoreHistoryItem(commandHistory[Number(item.dataset.historyIndex)]);
-});
 els.historySearch.addEventListener("input", renderHistory);
 document.querySelectorAll("[data-history-tool]").forEach((button) => button.addEventListener("click", () => {
   historyToolFilter = button.dataset.historyTool;
