@@ -18,12 +18,14 @@ import (
 )
 
 type server struct {
-	pageTemplate  *template.Template
-	blockTemplate *template.Template
-	staticHandler http.Handler
-	plugins       map[string]pluginapi.Plugin
-	presets       presetConfig
-	connections   *connectionPool
+	pageTemplate   *template.Template
+	blockTemplate  *template.Template
+	staticHandler  http.Handler
+	plugins        map[string]pluginapi.Plugin
+	presets        presetConfig
+	connections    *connectionPool
+	pythonRuns     chan struct{}
+	pythonSessions pythonSessionStore
 }
 
 func newServer() (*server, error) {
@@ -51,6 +53,7 @@ func newServer() (*server, error) {
 		pageTemplate: pageTemplate, blockTemplate: blockTemplate,
 		staticHandler: staticHandler,
 		plugins:       registry, presets: presets, connections: newConnectionPool(10 * time.Minute),
+		pythonRuns: make(chan struct{}, 2),
 	}, nil
 }
 
@@ -60,6 +63,8 @@ func (server *server) ServeHTTP(writer http.ResponseWriter, request *http.Reques
 		return
 	}
 	switch {
+	case server.presets.PythonIDE.Enabled && (request.URL.Path == server.presets.PythonIDE.Path || request.URL.Path == server.presets.PythonIDE.Path+"/login" || request.URL.Path == server.presets.PythonIDE.Path+"/logout"):
+		server.pythonIDE(writer, request)
 	case request.URL.Path == "/":
 		server.index(writer, request)
 	case request.URL.Path == "/query":

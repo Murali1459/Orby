@@ -1,4 +1,10 @@
 {
+  "pythonIde": {
+    "enabled": false,
+    "path": "/_orby/python",
+    "username": "replace-me",
+    "passwordHash": "$2b$12$sP1901bifwI5OsBuKG3x6.Be/Mhh0aoOGnnauJ8nRShoYQwcQ.7zS"
+  },
   "profiles": [
     {
       "id": "local",

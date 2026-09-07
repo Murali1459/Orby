@@ -5,6 +5,7 @@ go 1.26
 require (
 	github.com/aerospike/aerospike-client-go/v8 v8.8.0
 	github.com/redis/go-redis/v9 v9.21.0
+	golang.org/x/crypto v0.37.0
 )
 
 require (

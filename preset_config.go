@@ -8,10 +8,28 @@ import (
 	"os"
 	"strconv"
 	"strings"
+
+	"golang.org/x/crypto/bcrypt"
 )
 
 type presetConfig struct {
-	Profiles []presetProfile `json:"profiles"`
+	Profiles  []presetProfile `json:"profiles"`
+	PythonIDE pythonIDEConfig `json:"-"`
+}
+
+// pythonIDEConfig is deliberately excluded from JSON marshaling. The index
+// handler sends presetConfig to every browser, so including credentials here
+// without json:"-" would disclose the IDE password to unauthenticated users.
+type pythonIDEConfig struct {
+	Enabled      bool   `json:"enabled"`
+	Path         string `json:"path"`
+	Username     string `json:"username"`
+	PasswordHash string `json:"passwordHash"`
+}
+
+type presetConfigFile struct {
+	Profiles  []presetProfile `json:"profiles"`
+	PythonIDE pythonIDEConfig `json:"pythonIde"`
 }
 
 type presetProfile struct {
@@ -58,15 +76,16 @@ func loadPresetConfig(path string, knownTools map[string]bool) (presetConfig, er
 	}
 	defer file.Close()
 
-	var config presetConfig
+	var fileConfig presetConfigFile
 	decoder := json.NewDecoder(file)
 	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&config); err != nil {
+	if err := decoder.Decode(&fileConfig); err != nil {
 		if errors.Is(err, io.EOF) {
 			return presetConfig{}, nil
 		}
 		return presetConfig{}, fmt.Errorf("load preset connections: %w", err)
 	}
+	config := presetConfig{Profiles: fileConfig.Profiles, PythonIDE: fileConfig.PythonIDE}
 	if err := validatePresetConfig(&config, knownTools); err != nil {
 		return presetConfig{}, fmt.Errorf("load preset connections: %w", err)
 	}
@@ -74,6 +93,9 @@ func loadPresetConfig(path string, knownTools map[string]bool) (presetConfig, er
 }
 
 func validatePresetConfig(config *presetConfig, knownTools map[string]bool) error {
+	if err := validatePythonIDEConfig(&config.PythonIDE); err != nil {
+		return err
+	}
 	profileIDs := map[string]bool{}
 	connectionIDs := map[string]bool{}
 	connectionNames := map[string]bool{}
@@ -134,6 +156,34 @@ func validatePresetConfig(config *presetConfig, knownTools map[string]bool) erro
 			connection.Profile, connection.Preset = profile.ID, true
 			connectionIDs[connection.ID], connectionNames[connection.Name] = true, true
 		}
+	}
+	return nil
+}
+
+func validatePythonIDEConfig(config *pythonIDEConfig) error {
+	if !config.Enabled {
+		return nil
+	}
+	config.Path = strings.TrimSpace(config.Path)
+	config.Username = strings.TrimSpace(config.Username)
+	if config.Path == "" {
+		config.Path = "/_orby/python"
+	}
+	if !strings.HasPrefix(config.Path, "/") || strings.ContainsAny(config.Path, "?#") || config.Path == "/" {
+		return fmt.Errorf("python IDE path must be an absolute HTTP path")
+	}
+	reserved := map[string]bool{
+		"/query": true, "/connect": true, "/disconnect": true,
+		"/connection-status": true, "/plugin-options": true,
+	}
+	if reserved[config.Path] || strings.HasPrefix(config.Path, "/static/") {
+		return fmt.Errorf("python IDE path %q conflicts with an existing route", config.Path)
+	}
+	if config.Username == "" || config.PasswordHash == "" {
+		return fmt.Errorf("python IDE username and passwordHash are required when enabled")
+	}
+	if _, err := bcrypt.Cost([]byte(config.PasswordHash)); err != nil {
+		return fmt.Errorf("python IDE passwordHash must be a valid bcrypt hash")
 	}
 	return nil
 }
