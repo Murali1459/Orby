@@ -17,6 +17,7 @@ type blockData struct {
 	ToolName, ToolClass, ToolBadge, Query, Profile, Format, FormatLabel string
 	StatusLabel, ResultStatus, Timestamp, StateJSON, VirtualKind        string
 	ConnectionID, LeaseID, ConnectionName, Host, Port, Mode             string
+	Environment                                                         string
 	FieldsJSON                                                          string
 	CountLabel                                                          string
 	DurationMS                                                          int64
@@ -25,15 +26,15 @@ type blockData struct {
 }
 
 type virtualOutput struct {
-	Kind   string                 `json:"kind"`
-	Text   string                 `json:"text,omitempty"`
-	Heads  []string               `json:"heads,omitempty"`
-	Rows   [][]string             `json:"rows,omitempty"`
-	Browse *pluginapi.BrowseView  `json:"browse,omitempty"`
+	Kind   string                `json:"kind"`
+	Text   string                `json:"text,omitempty"`
+	Heads  []string              `json:"heads,omitempty"`
+	Rows   [][]string            `json:"rows,omitempty"`
+	Browse *pluginapi.BrowseView `json:"browse,omitempty"`
 }
 
 func (server *server) writeQueryResult(writer http.ResponseWriter, tool toolMetadata, request queryRequest, result queryResult, status string) {
-	data := blockFor(tool, request, result)
+	data := blockFor(tool, request, result, status)
 	var output bytes.Buffer
 	if err := server.blockTemplate.ExecuteTemplate(&output, "cmd_block.html", data); err != nil {
 		http.Error(writer, err.Error(), http.StatusInternalServerError)
@@ -44,7 +45,7 @@ func (server *server) writeQueryResult(writer http.ResponseWriter, tool toolMeta
 	writer.Write(output.Bytes())
 }
 
-func blockFor(tool toolMetadata, request queryRequest, result queryResult) blockData {
+func blockFor(tool toolMetadata, request queryRequest, result queryResult, status string) blockData {
 	format := strings.ToLower(strings.TrimSpace(result.Format))
 	if result.Error == "" && format != "json" && format != "table" && format != "raw" && format != "browse" {
 		if result.IsRaw {
@@ -53,7 +54,14 @@ func blockFor(tool toolMetadata, request queryRequest, result queryResult) block
 			format = "json"
 		}
 	}
-	isError := result.Error != "" || !result.Succeeded
+	statusLabel, resultStatus := "SUCCESS", "success"
+	isError := false
+	switch status {
+	case "error":
+		statusLabel, resultStatus, isError = "ERROR", "error", true
+	case "cancelled":
+		statusLabel, resultStatus = "CANCELLED", "cancelled"
+	}
 	state := result.State
 	if state == nil {
 		state = map[string]string{}
@@ -63,13 +71,9 @@ func blockFor(tool toolMetadata, request queryRequest, result queryResult) block
 	if len(fields) == 0 {
 		fields = []byte("{}")
 	}
-	statusLabel, resultStatus := "SUCCESS", "success"
-	if isError {
-		statusLabel, resultStatus = "ERROR", "error"
-	}
 	payload := virtualOutput{Kind: format}
 	switch {
-	case isError:
+	case isError || status == "cancelled":
 		payload.Kind, payload.Text = "error", result.Error
 	case format == "browse":
 		payload.Browse = result.Browse
@@ -89,7 +93,7 @@ func blockFor(tool toolMetadata, request queryRequest, result queryResult) block
 		payload.Text = string(encoded)
 	}
 	outputJSON, _ := json.Marshal(payload)
-	return blockData{ToolName: tool.Name, ToolClass: tool.ColorClass, ToolBadge: tool.Badge, Query: result.Query, Profile: pluginapi.ProfileName(result.Profile), Format: format, FormatLabel: strings.ToUpper(format), StatusLabel: statusLabel, ResultStatus: resultStatus, Timestamp: time.Now().Format("15:04:05"), StateJSON: string(encodedState), ConnectionID: request.ConnectionID, LeaseID: request.LeaseID, ConnectionName: request.ConnectionName, Host: request.Host, Port: request.Port, Mode: request.Mode, FieldsJSON: string(fields), VirtualKind: payload.Kind, CountLabel: resultCountLabel(result, isError), DurationMS: result.DurationMS, IsError: isError, OutputJSON: template.JS(outputJSON)}
+	return blockData{ToolName: tool.Name, ToolClass: tool.ColorClass, ToolBadge: tool.Badge, Query: result.Query, Profile: pluginapi.ProfileName(result.Profile), Format: format, FormatLabel: strings.ToUpper(format), StatusLabel: statusLabel, ResultStatus: resultStatus, Timestamp: time.Now().Format("15:04:05"), StateJSON: string(encodedState), ConnectionID: request.ConnectionID, LeaseID: request.LeaseID, ConnectionName: request.ConnectionName, Host: request.Host, Port: request.Port, Mode: request.Mode, Environment: normalizeEnvironment(request.Environment), FieldsJSON: string(fields), VirtualKind: payload.Kind, CountLabel: resultCountLabel(result, isError), DurationMS: result.DurationMS, IsError: isError, OutputJSON: template.JS(outputJSON)}
 }
 
 func resultCountLabel(result queryResult, isError bool) string {

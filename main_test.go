@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net"
@@ -11,6 +12,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	pluginapi "orby/plugins"
 )
@@ -38,7 +40,7 @@ func TestComposerCSSKeepsResponsiveControlsReadable(t *testing.T) {
 	if strings.Contains(css, ".composer-input {\n  padding-right:") {
 		t.Fatal("input-specific padding makes editable controls different widths")
 	}
-	if !strings.Contains(css, "@media (max-width: 1200px) {") || !strings.Contains(css, "grid-template-columns: 38px minmax(260px, 1fr) 38px 66px;") {
+	if !strings.Contains(css, "@media (max-width: 1200px) {") || !strings.Contains(css, "grid-template-columns: 38px minmax(260px, 1fr) 38px minmax(var(--run-btn-min), auto);") {
 		t.Fatal("composer does not compact when both desktop sidebars are open")
 	}
 }
@@ -261,9 +263,9 @@ func TestLeadingComposerAndCompactHeaderStayAlignedAtBreakpoints(t *testing.T) {
 	}
 	css := string(stylesheet)
 	for _, expected := range []string{
-		".operator-composer.has-leading { grid-template-columns: 38px 34px minmax(260px, 1fr) 38px 66px; }",
-		".operator-composer.has-leading { grid-template-columns: 38px 34px minmax(300px, 1fr) 38px 66px; }",
-		".operator-composer.has-leading { grid-template-columns: 38px 34px minmax(0, 1fr) 38px 66px; }",
+		".operator-composer.has-leading { grid-template-columns: 38px 34px minmax(260px, 1fr) 38px minmax(var(--run-btn-min), auto); }",
+		".operator-composer.has-leading { grid-template-columns: 38px 34px minmax(300px, 1fr) 38px minmax(var(--run-btn-min), auto); }",
+		".operator-composer.has-leading { grid-template-columns: 38px 34px minmax(0, 1fr) 38px minmax(var(--run-btn-min), auto); }",
 		"top: 48px;",
 		"inset: 48px 0 0;",
 	} {
@@ -1098,6 +1100,62 @@ func TestSelectingAnyListedConnectionImmediatelyConnects(t *testing.T) {
 	}
 }
 
+// TestQueryCannotEscalatePresetEnvironmentViaFormOverride is the core safety
+// property of the prod/stage switch: connections.json is the sole authority
+// for a preset's environment, so a forged "environment=stage" form field on
+// /query must not let a client unlock writes on a preset declared prod.
+func TestQueryCannotEscalatePresetEnvironmentViaFormOverride(t *testing.T) {
+	server := mustServer(t)
+	plugin := &fakePlugin{}
+	server.plugins = map[string]pluginapi.Plugin{"fake": plugin}
+	server.presets = presetConfig{Profiles: []presetProfile{{ID: "local", Label: "Local", Connections: []presetConnection{
+		{ID: "preset:prod-fake", Name: "prod-fake", Tool: "fake", Host: "database.internal", Port: "3000", Mode: "single", Environment: "prod", Fields: map[string]string{}},
+	}}}}
+
+	base := url.Values{"tool": {"fake"}, "host": {"database.internal"}, "port": {"3000"}, "connectionId": {"preset:prod-fake"}, "connectionName": {"prod-fake"}}
+	if response := postForm(server, "/connect", base); response.Code != http.StatusOK {
+		t.Fatalf("connect = %d %s", response.Code, response.Body.String())
+	}
+
+	query := url.Values{}
+	for key, items := range base {
+		query[key] = append([]string(nil), items...)
+	}
+	query.Set("query", "READ")
+	query.Set("environment", "stage") // forged: connections.json declares this preset prod
+	if response := postForm(server, "/query", query); response.Code != http.StatusOK {
+		t.Fatalf("query = %d %s", response.Code, response.Body.String())
+	}
+	if plugin.request.Environment != "prod" {
+		t.Fatalf("client-forged environment leaked through: plugin saw %q, want %q", plugin.request.Environment, "prod")
+	}
+}
+
+// TestQueryTrustsAdHocConnectionEnvironment covers the other half: a non-preset
+// connection has no server-side record to defer to, so the client's own
+// (normalized) input is the only source of truth.
+func TestQueryTrustsAdHocConnectionEnvironment(t *testing.T) {
+	server := mustServer(t)
+	plugin := &fakePlugin{}
+	server.plugins = map[string]pluginapi.Plugin{"fake": plugin}
+
+	values := url.Values{"tool": {"fake"}, "host": {"database.internal"}, "port": {"3000"}, "connectionId": {"manual-1"}, "query": {"READ"}, "environment": {"stage"}}
+	if response := postForm(server, "/query", values); response.Code != http.StatusOK {
+		t.Fatalf("query = %d %s", response.Code, response.Body.String())
+	}
+	if plugin.request.Environment != "stage" {
+		t.Fatalf("ad-hoc environment = %q, want %q", plugin.request.Environment, "stage")
+	}
+
+	values.Set("environment", "not-a-real-environment")
+	if response := postForm(server, "/query", values); response.Code != http.StatusOK {
+		t.Fatalf("query = %d %s", response.Code, response.Body.String())
+	}
+	if plugin.request.Environment != "prod" {
+		t.Fatalf("garbage environment should default to prod, got %q", plugin.request.Environment)
+	}
+}
+
 func TestPresetRequestsRequireExplicitConnect(t *testing.T) {
 	server := mustServer(t)
 	plugin := &fakePlugin{options: []pluginapi.Option{{Value: "users", Label: "users"}}}
@@ -1139,6 +1197,86 @@ func TestPresetRequestsRequireExplicitConnect(t *testing.T) {
 	server.ServeHTTP(optionsResponse, httptest.NewRequest(http.MethodGet, "/plugin-options?"+values.Encode()+"&resource=sets&namespace=test", nil))
 	if optionsResponse.Code != http.StatusOK || plugin.connects != 1 {
 		t.Fatalf("connected options=%d connects=%d body=%s", optionsResponse.Code, plugin.connects, optionsResponse.Body.String())
+	}
+}
+
+// blockingPlugin stalls Run until its query context is canceled, standing in
+// for a slow database call during cancel-flow tests.
+type blockingPlugin struct {
+	started chan struct{}
+}
+
+func (plugin *blockingPlugin) Metadata() toolMetadata {
+	return toolMetadata{Name: "blocking", Label: "Blocking", DefaultFormat: "raw"}
+}
+
+func (plugin *blockingPlugin) Connect(queryRequest) (pluginapi.Connection, error) {
+	return &blockingPluginConnection{plugin: plugin}, nil
+}
+
+type blockingPluginConnection struct{ plugin *blockingPlugin }
+
+func (connection *blockingPluginConnection) Run(request queryRequest) (queryResult, error) {
+	if request.Context == nil {
+		return queryResult{}, errors.New("query context is missing")
+	}
+	select {
+	case <-connection.plugin.started:
+	default:
+		close(connection.plugin.started)
+	}
+	<-request.Context.Done()
+	return queryResult{}, request.Context.Err()
+}
+
+func (connection *blockingPluginConnection) Close() error { return nil }
+
+func postForm(server *server, path string, values url.Values) *httptest.ResponseRecorder {
+	request := httptest.NewRequest(http.MethodPost, path, strings.NewReader(values.Encode()))
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	response := httptest.NewRecorder()
+	server.ServeHTTP(response, request)
+	return response
+}
+
+// Cancel = the UI aborting the query request; there is no /cancel endpoint.
+func TestCancelAbortsRunningQuery(t *testing.T) {
+	server := mustServer(t)
+	defer server.connections.Close()
+	plugin := &blockingPlugin{started: make(chan struct{})}
+	server.plugins = map[string]pluginapi.Plugin{"blocking": plugin}
+	values := url.Values{"tool": {"blocking"}, "host": {"db.internal"}, "port": {"3000"}, "query": {"SLOW"}}
+
+	if response := postForm(server, "/connect", values); response.Code != http.StatusOK {
+		t.Fatalf("connect = %d %s", response.Code, response.Body.String())
+	}
+	requestContext, cancelRequest := context.WithCancel(context.Background())
+	defer cancelRequest()
+	request := httptest.NewRequest(http.MethodPost, "/query", strings.NewReader(values.Encode()))
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	request = request.WithContext(requestContext)
+	queryResponse := make(chan *httptest.ResponseRecorder, 1)
+	go func() {
+		response := httptest.NewRecorder()
+		server.ServeHTTP(response, request)
+		queryResponse <- response
+	}()
+	select {
+	case <-plugin.started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("query never started")
+	}
+
+	cancelRequest()
+
+	select {
+	case response := <-queryResponse:
+		body := response.Body.String()
+		if response.Header().Get("X-Orby-Result") != "cancelled" || !strings.Contains(body, `data-result-status="cancelled"`) || !strings.Contains(body, "CANCELLED") {
+			t.Fatalf("query response is not marked cancelled: %s", body)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("cancelled query never returned")
 	}
 }
 
@@ -1198,7 +1336,7 @@ func TestRenderBlockUsesStructuredJSONValue(t *testing.T) {
 	data := blockFor(toolMetadata{Name: "redis"}, queryRequest{}, queryResult{
 		Tool: "redis", Query: "MGET first second", Format: "json",
 		JSONValue: []any{"first", map[string]any{"name": "Ada"}}, HasJSONValue: true, Succeeded: true,
-	})
+	}, "success")
 	var output virtualOutput
 	if err := json.Unmarshal([]byte(data.OutputJSON), &output); err != nil {
 		t.Fatal(err)
@@ -1212,14 +1350,14 @@ func TestRenderBlockShowsResultCountOnlyWhenAvailable(t *testing.T) {
 	counted := blockFor(toolMetadata{Name: "aerospike"}, queryRequest{}, queryResult{
 		Tool: "aerospike", Query: "SELECT * FROM test.users", Format: "table",
 		Rows: []map[string]any{{"name": "Ada"}, {"name": "Grace"}}, RowCount: 2, HasCount: true, Succeeded: true,
-	})
+	}, "success")
 	if counted.CountLabel != "2 records" {
 		t.Fatalf("count label = %q", counted.CountLabel)
 	}
 
 	scalar := blockFor(toolMetadata{Name: "redis"}, queryRequest{}, queryResult{
 		Tool: "redis", Query: "GET greeting", Format: "raw", Raw: "hello", IsRaw: true, Succeeded: true,
-	})
+	}, "success")
 	if scalar.CountLabel != "" {
 		t.Fatalf("scalar count label = %q", scalar.CountLabel)
 	}
@@ -1242,7 +1380,7 @@ func TestTableUsesCompactJSONForNestedValues(t *testing.T) {
 			"placement_bids": []any{map[string]any{"placement": "SEARCH", "cpc": float64(205)}},
 		}},
 		Succeeded: true,
-	})
+	}, "success")
 	var output virtualOutput
 	if err := json.Unmarshal([]byte(data.OutputJSON), &output); err != nil {
 		t.Fatal(err)
@@ -1314,5 +1452,42 @@ func TestConnectionAddresses(t *testing.T) {
 	}
 	if net.JoinHostPort("::1", "3000") != "[::1]:3000" {
 		t.Fatal("IPv6 formatting changed")
+	}
+}
+
+func TestConnectionKeyIncludesModeAndDBIndexForRedis(t *testing.T) {
+	base := queryRequest{Host: "db.internal", Port: "6379"}
+	single0, err := connectionKey("redis", queryRequest{Host: base.Host, Port: base.Port, Mode: "single", Fields: map[string]string{"dbIndex": "0"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cluster0, err := connectionKey("redis", queryRequest{Host: base.Host, Port: base.Port, Mode: "cluster", Fields: map[string]string{"dbIndex": "0"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	single2, err := connectionKey("redis", queryRequest{Host: base.Host, Port: base.Port, Mode: "single", Fields: map[string]string{"dbIndex": "2"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	emptyMode, err := connectionKey("redis", queryRequest{Host: base.Host, Port: base.Port})
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantSingle0 := "redis:db.internal:6379:mode=single:db=0"
+	if single0 != wantSingle0 || cluster0 == single0 || single2 == single0 {
+		t.Fatalf("redis keys must distinguish mode and dbIndex: single0=%q cluster0=%q single2=%q", single0, cluster0, single2)
+	}
+	if emptyMode != wantSingle0 {
+		t.Fatalf("empty mode/dbIndex should normalize to single/0: %q, want %q", emptyMode, wantSingle0)
+	}
+	aerospike, err := connectionKey("aerospike", queryRequest{Host: base.Host, Port: base.Port, Mode: "cluster", Fields: map[string]string{"dbIndex": "2"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if aerospike != "aerospike:db.internal:6379" {
+		t.Fatalf("non-redis tools should keep the plain host key: %q", aerospike)
+	}
+	if _, err := connectionKey("redis", queryRequest{Host: "bad", Port: "not-a-port"}); err == nil {
+		t.Fatal("invalid port must fail")
 	}
 }

@@ -1,6 +1,7 @@
 package aerospike
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"maps"
@@ -72,7 +73,11 @@ func (Plugin) Connect(request plugins.Request) (plugins.Connection, error) {
 type connection struct{ client *nativeClient }
 
 func (connection *connection) Run(request plugins.Request) (plugins.Result, error) {
-	return runWithClient(request, connection.client)
+	ctx := request.Context
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return runWithClient(ctx, request, connection.client)
 }
 
 func (connection *connection) Options(request plugins.Request, resource string) ([]plugins.Option, error) {
@@ -84,7 +89,7 @@ func (connection *connection) Close() error {
 	return nil
 }
 
-func runWithClient(request plugins.Request, client *nativeClient) (plugins.Result, error) {
+func runWithClient(ctx context.Context, request plugins.Request, client *nativeClient) (plugins.Result, error) {
 	started := time.Now()
 	command, err := parseCommand(request)
 	if err != nil {
@@ -104,16 +109,10 @@ func runWithClient(request plugins.Request, client *nativeClient) (plugins.Resul
 			err = scanErr
 		} else {
 			defer recordset.Close()
-			for result := range recordset.Results() {
-				if result.Err != nil {
-					err = result.Err
-					break
-				}
-				records = append(records, result.Record)
-			}
+			records, err = collectRecords(ctx, recordset)
 		}
 	} else {
-		record, getErr := client.Get(command.Namespace, command.Set, command.PrimaryKey, command.Filter)
+		record, getErr := client.Get(ctx, command.Namespace, command.Set, command.PrimaryKey, command.Filter)
 		if getErr != nil {
 			if errors.Is(getErr, as.ErrKeyNotFound) {
 				err = fmt.Errorf("record not found in %s.%s for primary key %q", command.Namespace, command.Set, command.PrimaryKey)
@@ -140,6 +139,27 @@ func runWithClient(request plugins.Request, client *nativeClient) (plugins.Resul
 		DurationMS: time.Since(started).Milliseconds(), Succeeded: true, State: state,
 	}
 	return result, nil
+}
+
+// collectRecords drains a scan recordset until it is exhausted or the
+// context is canceled, stopping the scan promptly on abort.
+func collectRecords(ctx context.Context, recordset *as.Recordset) ([]*as.Record, error) {
+	records := []*as.Record{}
+	for {
+		select {
+		case <-ctx.Done():
+			recordset.Close()
+			return nil, ctx.Err()
+		case result, open := <-recordset.Results():
+			if !open {
+				return records, nil
+			}
+			if result.Err != nil {
+				return nil, result.Err
+			}
+			records = append(records, result.Record)
+		}
+	}
 }
 
 func summary(command command) string {

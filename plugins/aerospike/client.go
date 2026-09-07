@@ -1,6 +1,7 @@
 package aerospike
 
 import (
+	"context"
 	"time"
 
 	as "github.com/aerospike/aerospike-client-go/v8"
@@ -23,14 +24,32 @@ func newNativeClient(seeds []plugins.Address) (*nativeClient, error) {
 	return &nativeClient{client: client}, nil
 }
 
-func (client *nativeClient) Get(namespace, set, primaryKey string, filter *as.Expression) (*as.Record, error) {
+// Get returns one record by primary key. The native client has no
+// context-aware Get, so the call runs on its own goroutine and a canceled
+// context returns immediately; the stray goroutine is bounded by the policy
+// timeout and only performs a read.
+func (client *nativeClient) Get(ctx context.Context, namespace, set, primaryKey string, filter *as.Expression) (*as.Record, error) {
 	key, err := as.NewKey(namespace, set, primaryKey)
 	if err != nil {
 		return nil, err
 	}
 	policy := as.NewPolicy()
 	policy.TotalTimeout, policy.FilterExpression = 10*time.Second, filter
-	return client.client.Get(policy, key)
+	type outcome struct {
+		record *as.Record
+		err    error
+	}
+	done := make(chan outcome, 1)
+	go func() {
+		record, err := client.client.Get(policy, key)
+		done <- outcome{record: record, err: err}
+	}()
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case result := <-done:
+		return result.record, result.err
+	}
 }
 
 func (client *nativeClient) Scan(namespace, set string, filter *as.Expression, limit int) (*as.Recordset, error) {

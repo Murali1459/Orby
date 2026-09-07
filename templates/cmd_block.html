@@ -4,7 +4,7 @@
          data-state='{{.StateJSON}}' data-result-status="{{.ResultStatus}}"
          data-connection-id="{{.ConnectionID}}" data-lease-id="{{.LeaseID}}"
          data-connection-name="{{.ConnectionName}}" data-host="{{.Host}}"
-         data-port="{{.Port}}" data-mode="{{.Mode}}" data-fields='{{.FieldsJSON}}'>
+         data-port="{{.Port}}" data-mode="{{.Mode}}" data-environment="{{.Environment}}" data-fields='{{.FieldsJSON}}'>
   <header class="cmd-header">
     <time class="cmd-time">{{.Timestamp}}</time>
     <span class="tool-badge {{.ToolClass}}">{{.ToolBadge}}</span>
@@ -12,6 +12,7 @@
     <div class="cmd-meta">
       <span>{{.Profile}}</span>
       <span>{{.DurationMS}}ms</span>
+      {{if eq .Environment "stage"}}<span class="cmd-env cmd-env-stage">STAGE</span>{{end}}
       {{if .CountLabel}}<span class="cmd-count">{{.CountLabel}}</span>{{end}}
       <span class="cmd-format">{{.FormatLabel}}</span>
       <span class="cmd-status{{if .IsError}} is-error{{end}}">{{.StatusLabel}}</span>

@@ -21,15 +21,31 @@ type presetProfile struct {
 }
 
 type presetConnection struct {
-	ID      string            `json:"id"`
-	Name    string            `json:"name"`
-	Tool    string            `json:"tool"`
-	Profile string            `json:"profile"`
-	Host    string            `json:"host"`
-	Port    string            `json:"port"`
-	Mode    string            `json:"mode"`
-	Fields  map[string]string `json:"fields"`
-	Preset  bool              `json:"preset"`
+	ID   string `json:"id"`
+	Name string `json:"name"`
+	Tool string `json:"tool"`
+	// Environment is "prod" (default; read-only) or "stage" (writes
+	// permitted). It is the server's own authority on this connection: the
+	// browser cannot override it by forging a form field on /query.
+	Environment string            `json:"environment"`
+	Profile     string            `json:"profile"`
+	Host        string            `json:"host"`
+	Port        string            `json:"port"`
+	Mode        string            `json:"mode"`
+	Fields      map[string]string `json:"fields"`
+	Preset      bool              `json:"preset"`
+}
+
+// connectionByID returns the preset connection with the given id, if any.
+func (config presetConfig) connectionByID(id string) (presetConnection, bool) {
+	for _, profile := range config.Profiles {
+		for _, connection := range profile.Connections {
+			if connection.ID == id {
+				return connection, true
+			}
+		}
+	}
+	return presetConnection{}, false
 }
 
 func loadPresetConfig(path string, knownTools map[string]bool) (presetConfig, error) {
@@ -100,6 +116,13 @@ func validatePresetConfig(config *presetConfig, knownTools map[string]bool) erro
 			}
 			if connection.Mode != "single" && connection.Mode != "cluster" {
 				return fmt.Errorf("connection %q has invalid mode %q", connection.Name, connection.Mode)
+			}
+			connection.Environment = strings.ToLower(strings.TrimSpace(connection.Environment))
+			if connection.Environment == "" {
+				connection.Environment = "prod"
+			}
+			if connection.Environment != "prod" && connection.Environment != "stage" {
+				return fmt.Errorf("connection %q has invalid environment %q", connection.Name, connection.Environment)
 			}
 			port, err := strconv.Atoi(connection.Port)
 			if err != nil || port < 1 || port > 65535 {

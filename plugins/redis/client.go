@@ -13,13 +13,13 @@ import (
 )
 
 type redisClient interface {
-	Execute([]string) (any, error)
+	Execute(ctx context.Context, tokens []string) (any, error)
 	Ping() error
 	Close() error
-	Scan(cursor string, pattern string, count int64) (keys []string, nextCursor string, err error)
-	ScanCluster(pattern string, count int64, limit int) (keys []string, limited bool, err error)
-	Types(keys []string) ([]string, error) // pipelined TYPE, one result per input key, same order
-	TTLs(keys []string) ([]int64, error)   // pipelined TTL in seconds, one result per input key, same order
+	Scan(ctx context.Context, cursor string, pattern string, count int64) (keys []string, nextCursor string, err error)
+	ScanCluster(ctx context.Context, pattern string, count int64, limit int) (keys []string, limited bool, err error)
+	Types(ctx context.Context, keys []string) ([]string, error) // pipelined TYPE, one result per input key, same order
+	TTLs(ctx context.Context, keys []string) ([]int64, error)   // pipelined TTL in seconds, one result per input key, same order
 }
 
 var redisClientFactory = newNativeRedisClient
@@ -50,24 +50,24 @@ func newNativeRedisClient(cluster bool, addresses []address, db int) (redisClien
 	return &nativeRedisClient{client: client, ctx: context.Background()}, nil
 }
 
-func (client *nativeRedisClient) Execute(tokens []string) (any, error) {
+func (client *nativeRedisClient) Execute(ctx context.Context, tokens []string) (any, error) {
 	arguments := make([]any, len(tokens))
 	for index, token := range tokens {
 		arguments[index] = token
 	}
-	return client.client.Do(client.ctx, arguments...).Result()
+	return client.client.Do(ctx, arguments...).Result()
 }
 
 func (client *nativeRedisClient) Ping() error { return client.client.Ping(client.ctx).Err() }
 
 func (client *nativeRedisClient) Close() error { return client.client.Close() }
 
-func (client *nativeRedisClient) Scan(cursor string, pattern string, count int64) ([]string, string, error) {
+func (client *nativeRedisClient) Scan(ctx context.Context, cursor string, pattern string, count int64) ([]string, string, error) {
 	start, err := strconv.ParseUint(cursor, 10, 64)
 	if err != nil {
 		return nil, "", fmt.Errorf("invalid SCAN cursor %q", cursor)
 	}
-	keys, next, err := client.client.Scan(client.ctx, start, pattern, count).Result()
+	keys, next, err := client.client.Scan(ctx, start, pattern, count).Result()
 	if err != nil {
 		return nil, "", err
 	}
@@ -78,7 +78,7 @@ func (client *nativeRedisClient) Scan(cursor string, pattern string, count int64
 // ClusterClient.Scan itself routes to a single random node. Keys are
 // deduplicated by name across nodes (resharding can surface duplicates);
 // limited reports whether the cap was hit before every node finished.
-func (client *nativeRedisClient) ScanCluster(pattern string, count int64, limit int) ([]string, bool, error) {
+func (client *nativeRedisClient) ScanCluster(ctx context.Context, pattern string, count int64, limit int) ([]string, bool, error) {
 	cluster, ok := client.client.(*redislib.ClusterClient)
 	if !ok {
 		return nil, false, fmt.Errorf("cluster-wide SCAN requires a cluster connection")
@@ -90,7 +90,7 @@ func (client *nativeRedisClient) ScanCluster(pattern string, count int64, limit 
 	}
 	var nodes []*nodeCursor
 	lock := sync.Mutex{}
-	if err := cluster.ForEachMaster(client.ctx, func(ctx context.Context, node *redislib.Client) error {
+	if err := cluster.ForEachMaster(ctx, func(ctx context.Context, node *redislib.Client) error {
 		lock.Lock()
 		nodes = append(nodes, &nodeCursor{client: node})
 		lock.Unlock()
@@ -105,11 +105,14 @@ func (client *nativeRedisClient) ScanCluster(pattern string, count int64, limit 
 	keys := make([]string, 0, limit)
 	active := len(nodes)
 	for active > 0 {
+		if err := ctx.Err(); err != nil {
+			return nil, false, err
+		}
 		for _, node := range nodes {
 			if node.done {
 				continue
 			}
-			page, next, scanErr := node.client.Scan(client.ctx, node.cursor, pattern, count).Result()
+			page, next, scanErr := node.client.Scan(ctx, node.cursor, pattern, count).Result()
 			if scanErr != nil {
 				return nil, false, scanErr
 			}
@@ -134,16 +137,16 @@ func (client *nativeRedisClient) ScanCluster(pattern string, count int64, limit 
 	return keys, false, nil
 }
 
-func (client *nativeRedisClient) Types(keys []string) ([]string, error) {
+func (client *nativeRedisClient) Types(ctx context.Context, keys []string) ([]string, error) {
 	if len(keys) == 0 {
 		return nil, nil
 	}
 	pipe := client.client.Pipeline()
 	commands := make([]*redislib.StatusCmd, len(keys))
 	for index, key := range keys {
-		commands[index] = pipe.Type(client.ctx, key)
+		commands[index] = pipe.Type(ctx, key)
 	}
-	if _, err := pipe.Exec(client.ctx); err != nil {
+	if _, err := pipe.Exec(ctx); err != nil {
 		return nil, err
 	}
 	types := make([]string, len(keys))
@@ -153,16 +156,16 @@ func (client *nativeRedisClient) Types(keys []string) ([]string, error) {
 	return types, nil
 }
 
-func (client *nativeRedisClient) TTLs(keys []string) ([]int64, error) {
+func (client *nativeRedisClient) TTLs(ctx context.Context, keys []string) ([]int64, error) {
 	if len(keys) == 0 {
 		return nil, nil
 	}
 	pipe := client.client.Pipeline()
 	commands := make([]*redislib.DurationCmd, len(keys))
 	for index, key := range keys {
-		commands[index] = pipe.TTL(client.ctx, key)
+		commands[index] = pipe.TTL(ctx, key)
 	}
-	if _, err := pipe.Exec(client.ctx); err != nil {
+	if _, err := pipe.Exec(ctx); err != nil {
 		return nil, err
 	}
 	ttls := make([]int64, len(keys))

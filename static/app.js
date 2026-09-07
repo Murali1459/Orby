@@ -24,6 +24,9 @@ let manualConnectionID = newID();
 let historyToolFilter = "all";
 let outputRefreshPending = false;
 let lastBrowsePattern = "*";
+let queryInFlight = false;
+let cancelInFlight = false;
+let queryStartedAt = 0;
 
 const els = {
   composerTool: document.getElementById("composer-tool"),
@@ -47,10 +50,13 @@ const els = {
   host: document.getElementById("host-input"),
   port: document.getElementById("port-input"),
   mode: document.getElementById("mode-select"),
+  environment: document.getElementById("environment-select"),
   pluginFields: document.getElementById("plugin-fields"),
   formHost: document.getElementById("form-host"),
   formPort: document.getElementById("form-port"),
   formMode: document.getElementById("form-mode"),
+  formEnvironment: document.getElementById("form-environment"),
+  readOnlyStatus: document.getElementById("read-only-status"),
   formConnectionID: document.getElementById("form-connection-id"),
   formLeaseID: document.getElementById("form-lease-id"),
   formConnectionName: document.getElementById("form-connection-name"),
@@ -77,6 +83,8 @@ const els = {
   topConnection: document.getElementById("top-connection-status"),
   topConnectionText: document.getElementById("top-connection-text"),
   topActiveConnection: document.getElementById("top-active-connection"),
+  composerActivity: document.getElementById("composer-activity"),
+  queryStatus: document.getElementById("query-status"),
 };
 
 const defaultWorkspaceLayout = { leftOpen: true, rightOpen: true, leftWidth: 280, rightWidth: 340 };
@@ -228,7 +236,8 @@ function renderConnectionRail() {
       const active = item.id === selectedID && item.tool === selectedTool ? " is-active" : "";
       const connected = activeConnectionIDs.has(item.id) ? " is-connected" : "";
       const endpoint = item.host?.includes(":") ? item.host : [item.host, item.port].filter(Boolean).join(":");
-      return `<button type="button" class="connection-item${active}${connected}" data-connection-id="${escapeHTML(item.id)}" data-connection-tool="${escapeHTML(item.tool)}"><span class="connection-dot"></span><span class="connection-item-copy"><strong>${escapeHTML(item.name)}</strong><small>${escapeHTML(endpoint || item.tool)}</small></span></button>`;
+      const stageBadge = item.environment === "stage" ? `<span class="connection-env-badge">STAGE</span>` : "";
+      return `<button type="button" class="connection-item${active}${connected}" data-connection-id="${escapeHTML(item.id)}" data-connection-tool="${escapeHTML(item.tool)}"><span class="connection-dot"></span><span class="connection-item-copy"><strong>${escapeHTML(item.name)}</strong><small>${escapeHTML(endpoint || item.tool)}</small></span>${stageBadge}</button>`;
     }).join("");
     const open = collapsedProfiles.has(group.profile) ? "" : " open";
     return `<details class="connection-group" data-profile="${escapeHTML(group.profile)}"${open}><summary class="connection-group-summary"><span>${escapeHTML(group.label)}</span><span class="connection-group-count">${group.connections.length}</span><span class="connection-group-chevron" aria-hidden="true"></span></summary><div class="connection-group-items">${items}</div></details>`;
@@ -267,6 +276,7 @@ function syncFormState() {
   els.formHost.value = els.host.value.trim();
   els.formPort.value = els.port.value.trim();
   els.formMode.value = els.mode.value;
+  els.formEnvironment.value = els.environment.value;
   els.toolSelect.value = els.composerTool.value;
   els.connectionSelect.value = els.composerConnection.value;
   els.emptyConnectionName.textContent = els.formConnectionName.value;
@@ -275,6 +285,18 @@ function syncFormState() {
     : els.formConnectionName.value;
   refreshCustomSelects(els.toolSelect);
   refreshCustomSelects(els.mode);
+  refreshCustomSelects(els.environment);
+  syncEnvironmentBadge();
+}
+
+// The topbar badge is the one signal always visible regardless of which
+// panel is open, so it must reflect the resolved (not merely selected)
+// environment: a preset always shows its true connections.json value here
+// too, since applyConnection() seeds els.environment from the preset itself.
+function syncEnvironmentBadge() {
+  const stage = els.formEnvironment.value === "stage";
+  els.readOnlyStatus.textContent = stage ? "[STAGE · WRITES ALLOWED]" : "[READ ONLY]";
+  els.readOnlyStatus.classList.toggle("is-stage", stage);
 }
 
 function connectionParams() {
@@ -286,6 +308,7 @@ function connectionParams() {
     host: els.formHost.value,
     port: els.formPort.value,
     mode: els.formMode.value,
+    environment: els.formEnvironment.value,
   });
   els.pluginFields.querySelectorAll("[data-plugin-field]").forEach((input) => params.set(input.dataset.pluginField, input.value));
   return params;
@@ -323,6 +346,7 @@ async function applyConnection(id) {
   els.host.value = connection?.host || "";
   els.port.value = connection?.port || "";
   els.mode.value = connection?.mode || "single";
+  els.environment.value = connection?.environment === "stage" ? "stage" : "prod";
   renderPluginFields(connection?.fields || {});
   syncFormState();
   renderConnectionRail();
@@ -334,7 +358,7 @@ async function applyConnection(id) {
 function collectCurrentConnection(id = els.composerConnection.value || manualConnectionID) {
   const fields = {};
   els.pluginFields.querySelectorAll("[data-plugin-field]").forEach((input) => { fields[input.dataset.pluginField] = input.value; });
-  return { id, name: els.connectionName.value.trim(), tool: els.composerTool.value, host: els.host.value.trim(), port: els.port.value.trim(), mode: els.mode.value, fields };
+  return { id, name: els.connectionName.value.trim(), tool: els.composerTool.value, host: els.host.value.trim(), port: els.port.value.trim(), mode: els.mode.value, environment: els.environment.value, fields };
 }
 
 function showConnectionMessage(message, invalid = false) {
@@ -357,6 +381,9 @@ function updateConnectionActions() {
   els.deleteConnection.disabled = !saved || preset;
   els.connect.disabled = !valid || pending;
   els.disconnect.disabled = els.connectionState.dataset.state !== "reachable";
+  // A preset's environment is server-enforced from connections.json regardless
+  // of this control, so disable it here to avoid implying a client override works.
+  els.environment.disabled = preset;
 }
 
 function saveCurrentConnection() {
@@ -714,7 +741,7 @@ function optionParams(resource) {
   const params = new URLSearchParams({
     tool: els.composerTool.value, resource,
     connectionId: els.formConnectionID.value, leaseId: els.formLeaseID.value, connectionName: els.formConnectionName.value,
-    host: els.formHost.value, port: els.formPort.value, mode: els.formMode.value,
+    host: els.formHost.value, port: els.formPort.value, mode: els.formMode.value, environment: els.formEnvironment.value,
   });
   for (const [name, value] of Object.entries(composerValues())) params.set(name, value);
   return params;
@@ -924,7 +951,78 @@ function invalidateConnectionStatus(message = "Unsaved connection changes") {
   els.connect.textContent = "Connect"; setConnectionStatus("details-changed", message);
 }
 
-function setRunning(running) { els.runQuery.disabled = running; els.runQuery.textContent = running ? "Running…" : "Run"; }
+function setRunning(running) {
+  queryInFlight = running;
+  cancelInFlight = false;
+  els.runQuery.disabled = false;
+  els.runQuery.classList.toggle("is-running", running);
+  els.runQuery.querySelector(".run-label").textContent = running ? "Cancel" : "Run";
+  els.runQuery.setAttribute("aria-label", running ? "Cancel running query" : "Run query");
+  if (els.composerActivity) els.composerActivity.hidden = !running;
+  if (running) queryStartedAt = Date.now();
+}
+
+function isEditableTarget(target) {
+  const element = target instanceof Element ? target : null;
+  return Boolean(element && (element.matches("input, textarea, select") || element.isContentEditable));
+}
+
+function announceQueryStatus(message) {
+  if (els.queryStatus) els.queryStatus.textContent = message;
+}
+
+// Aborting closes the connection, which cancels the plugin context server-side;
+// the cancelled block is rendered client-side because no response will arrive.
+function cancelRunningQuery() {
+  if (!queryInFlight || cancelInFlight) return;
+  cancelInFlight = true;
+  const elapsed = Date.now() - queryStartedAt;
+  setRunning(false);
+  els.queryForm.dispatchEvent(new CustomEvent("htmx:abort", { bubbles: true, cancelable: true, detail: { elt: els.queryForm } }));
+  appendCancelledBlock(elapsed);
+  keepLatestOutputVisible();
+  announceQueryStatus("Query cancelled");
+}
+
+function appendCancelledBlock(elapsed) {
+  const tool = currentTool() || { name: "", badge: "", colorClass: "" };
+  const state = composerValues();
+  const fields = collectCurrentConnection().fields || {};
+  const article = document.createElement("article");
+  article.className = "cmd-block";
+  article.dataset.outputFormat = els.composerFormat.value;
+  article.dataset.tool = tool.name;
+  article.dataset.query = state.query || "";
+  article.dataset.state = JSON.stringify(state);
+  article.dataset.resultStatus = "cancelled";
+  article.dataset.connectionId = els.formConnectionID.value;
+  article.dataset.leaseId = els.formLeaseID.value;
+  article.dataset.connectionName = els.formConnectionName.value;
+  article.dataset.host = els.formHost.value;
+  article.dataset.port = els.formPort.value;
+  article.dataset.mode = els.formMode.value;
+  article.dataset.environment = els.formEnvironment.value;
+  article.dataset.fields = JSON.stringify(fields);
+  const format = els.composerFormat.value || "raw";
+  article.innerHTML =
+    `<header class="cmd-header">` +
+    `<time class="cmd-time">${new Date().toLocaleTimeString()}</time>` +
+    `<span class="tool-badge ${escapeHTML(tool.colorClass || "")}">${escapeHTML(tool.badge || tool.name || "")}</span>` +
+    `<code class="cmd-query">${escapeHTML(state.query || "")}</code>` +
+    `<div class="cmd-meta">` +
+    `<span>${escapeHTML(els.formConnectionName.value || "")}</span>` +
+    `<span>${elapsed}ms</span>` +
+    `<span class="cmd-format">${escapeHTML(format.toUpperCase())}</span>` +
+    `<span class="cmd-status">CANCELLED</span>` +
+    `</div>` +
+    `</header>` +
+    `<div class="cmd-output"><div class="virtual-output" data-virtual-kind="error">` +
+    `<script type="application/json" class="virtual-output-data">${JSON.stringify({ kind: "error", text: "cancelled by user" })}</script>` +
+    `<div class="virtual-scroll" role="region" aria-label="Query output" tabindex="0"></div>` +
+    `</div></div>`;
+  els.outputArea.append(article);
+}
+
 function updateOutputState() {
   const hasOutputs = els.outputArea.querySelectorAll(".cmd-block").length > 0;
   els.emptyState.hidden = hasOutputs;
@@ -1025,6 +1123,8 @@ function applyBlockConnection(block) {
   els.host.value = data.host || "";
   els.port.value = data.port || "";
   els.mode.value = data.mode || "single";
+  els.environment.value = data.environment === "stage" ? "stage" : "prod";
+  els.environment.disabled = Boolean(saved && selectedConnection()?.preset);
   renderPluginFields(parseFieldsJSON(data.fields));
   syncFormState();
   // Override syncFormState: replay the original lease so pool/preset lookups match the first run.
@@ -1034,6 +1134,8 @@ function applyBlockConnection(block) {
   els.formHost.value = data.host || els.formHost.value;
   els.formPort.value = data.port || els.formPort.value;
   els.formMode.value = data.mode || els.formMode.value;
+  els.formEnvironment.value = data.environment || els.formEnvironment.value;
+  syncEnvironmentBadge();
   renderConnectionRail();
 }
 
@@ -1090,13 +1192,24 @@ els.rightSidebarResizer.addEventListener("pointerdown", (event) => startSidebarR
 els.leftSidebarResizer.addEventListener("keydown", (event) => resizeSidebarWithKeyboard("left", event));
 els.rightSidebarResizer.addEventListener("keydown", (event) => resizeSidebarWithKeyboard("right", event));
 els.panelBackdrop.addEventListener("click", closePanels);
-document.addEventListener("keydown", (event) => { if (event.key === "Escape") closePanels(); });
+document.addEventListener("keydown", (event) => {
+  if (event.key !== "Escape") return;
+  if (queryInFlight && !isEditableTarget(event.target)) {
+    event.preventDefault();
+    cancelRunningQuery();
+    return;
+  }
+  closePanels();
+});
 els.composerFormat.addEventListener("change", syncFormatPresentation);
 els.connectionName.addEventListener("input", () => { syncFormState(); renderConnectionRail(); invalidateConnectionStatus(); });
 [els.host, els.port, els.mode].forEach((element) => {
   const changed = () => { syncFormState(); invalidateConnectionStatus(); };
   element.addEventListener("input", changed); element.addEventListener("change", changed);
 });
+// Environment doesn't affect reachability, so switching it takes effect on the
+// next query without forcing a "reconnect" prompt like host/port/mode do.
+els.environment.addEventListener("change", syncFormState);
 
 els.connect.addEventListener("click", connectSelectedConnection);
 els.disconnect.addEventListener("click", async () => {
@@ -1110,6 +1223,7 @@ els.disconnect.addEventListener("click", async () => {
 });
 
 els.queryForm.addEventListener("submit", (event) => {
+  if (queryInFlight) { event.preventDefault(); return; }
   syncFormState(); syncExpressionInput();
   const message = validateExpression();
   if (message) { event.preventDefault(); els.actionPanel.hidden = false; renderExpressionPanel(); els.actionPanel.querySelector(".expression-message").textContent = message; return; }
@@ -1117,6 +1231,13 @@ els.queryForm.addEventListener("submit", (event) => {
   const browseMatch = /^BROWSE\s+(.+?)(?:\s+LIMIT\s+\d+)?$/i.exec(String(state.query || "").trim());
   if (browseMatch) lastBrowsePattern = browseMatch[1].trim() || "*";
   addHistory(els.composerTool.value, composerSummary(), state); setRunning(true);
+  announceQueryStatus("Query running");
+});
+
+els.runQuery.addEventListener("click", (event) => {
+  if (!queryInFlight || cancelInFlight) return;
+  event.preventDefault();
+  cancelRunningQuery();
 });
 
 els.browseKeys.addEventListener("click", () => {

@@ -41,7 +41,7 @@ func (server *server) pluginOptions(writer http.ResponseWriter, request *http.Re
 	}
 	values := request.URL.Query()
 	query := requestFromValues(values)
-	key, err := connectionKey(toolName, query.Host, query.Port)
+	key, err := connectionKey(toolName, query)
 	if err != nil {
 		http.Error(writer, err.Error(), http.StatusBadRequest)
 		return
@@ -74,7 +74,7 @@ func (server *server) pluginOptions(writer http.ResponseWriter, request *http.Re
 
 func (server *server) acquireConnection(key string, request queryRequest, plugin pluginapi.Plugin) (pluginapi.Connection, func(), error) {
 	lease := requestLease(request)
-	if strings.HasPrefix(request.ConnectionID, "preset:") {
+	if isPresetConnectionID(request.ConnectionID) {
 		return server.connections.AcquireExisting(key, lease)
 	}
 	return server.connections.Acquire(key, lease, func() (pluginapi.Connection, error) {
@@ -97,7 +97,7 @@ func (server *server) connect(writer http.ResponseWriter, request *http.Request)
 		return
 	}
 	query := requestFromValues(request.Form)
-	key, err := connectionKey(toolName, query.Host, query.Port)
+	key, err := connectionKey(toolName, query)
 	if err != nil {
 		writeJSON(writer, http.StatusBadRequest, map[string]any{"reachable": false, "message": err.Error()})
 		return
@@ -120,11 +120,12 @@ func (server *server) disconnect(writer http.ResponseWriter, request *http.Reque
 		return
 	}
 	toolName := request.Form.Get("tool")
-	key, err := connectionKey(toolName, request.Form.Get("host"), request.Form.Get("port"))
+	query := requestFromValues(request.Form)
+	key, err := connectionKey(toolName, query)
 	if err != nil {
 		writeJSON(writer, http.StatusBadRequest, map[string]any{"disconnected": false, "message": err.Error()})
 		return
 	}
-	server.connections.Disconnect(key, requestLease(requestFromValues(request.Form)))
+	server.connections.Disconnect(key, requestLease(query))
 	writeJSON(writer, http.StatusOK, map[string]any{"disconnected": true, "message": key + " disconnected"})
 }

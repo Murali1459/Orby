@@ -31,7 +31,7 @@
       </button>
       <span class="top-context">Query console</span>
       <div class="topbar-status">
-        <span class="read-only-status">[READ ONLY]</span>
+        <span id="read-only-status" class="read-only-status">[READ ONLY]</span>
         <span id="top-connection-status" data-state="disconnected"><span class="status-dot"></span> <span id="top-connection-text">disconnected</span></span>
       </div>
       <button id="toggle-right-panel" type="button" class="panel-toggle top-settings-trigger" aria-label="Hide settings" aria-controls="connection-sidebar" aria-expanded="true" title="Hide settings"><span class="panel-toggle-icon panel-right-icon" aria-hidden="true"></span></button>
@@ -73,7 +73,7 @@
             <select id="composer-connection" hidden aria-hidden="true" tabindex="-1"></select>
             <div id="plugin-composer" class="plugin-composer" aria-live="polite"></div>
             <label id="composer-format-picker" class="format-picker" title="JSON"><span>Output</span><img id="composer-format-icon" src="/static/icons/braces.svg" alt=""><select id="composer-format" name="format" aria-label="Output format"></select></label>
-            <button id="run-query" type="submit">Run</button>
+            <button id="run-query" type="submit"><span class="run-icon" aria-hidden="true"><span class="run-glyph play-glyph"></span><span class="run-glyph stop-glyph"></span></span><span class="run-label">Run</span></button>
             <button id="browse-keys" type="button" hidden>Browse</button>
             <input id="form-connection-id" name="connectionId" type="hidden">
             <input id="form-lease-id" name="leaseId" type="hidden">
@@ -81,7 +81,10 @@
             <input id="form-host" name="host" type="hidden">
             <input id="form-port" name="port" type="hidden">
             <input id="form-mode" name="mode" type="hidden">
+            <input id="form-environment" name="environment" type="hidden">
           </form>
+          <div id="composer-activity" class="composer-activity" aria-hidden="true" hidden></div>
+          <p id="query-status" class="visually-hidden" role="status" aria-live="polite"></p>
         </div>
       </section>
 
@@ -96,6 +99,7 @@
             <label>Port<input id="port-input" placeholder="3000" required aria-required="true"></label>
           </div>
           <label>Mode<select id="mode-select"><option value="single">Single host</option><option value="cluster">Cluster seed hosts</option></select></label>
+          <label>Environment<select id="environment-select"><option value="prod">Production (read-only)</option><option value="stage">Stage (read/write)</option></select></label>
           <details class="plugin-settings"><summary>Plugin-specific settings</summary><div id="plugin-fields"></div></details>
           <div class="sidebar-actions">
             <button id="disconnect-btn" type="button">Disconnect</button>

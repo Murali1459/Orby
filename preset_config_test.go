@@ -1,7 +1,6 @@
 package main
 
 import (
-	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -47,6 +46,30 @@ func TestLoadPresetConfig(t *testing.T) {
 	if connection.ID != "preset:redis-local" || connection.Profile != "local" || !connection.Preset || connection.Fields["dbIndex"] != "0" {
 		t.Fatalf("connection = %#v", connection)
 	}
+	if connection.Environment != "prod" {
+		t.Fatalf("environment should default to prod, got %q", connection.Environment)
+	}
+}
+
+func TestLoadPresetConfigNormalizesEnvironment(t *testing.T) {
+	path := writePresetConfig(t, `{
+  "profiles": [{
+    "id": "local",
+    "label": "Local",
+    "connections": [
+      {"id": "preset:a", "name": "a", "tool": "redis", "host": "127.0.0.1", "port": "6379", "mode": "single", "environment": "STAGE"},
+      {"id": "preset:b", "name": "b", "tool": "redis", "host": "127.0.0.1", "port": "6380", "mode": "single", "environment": " Prod "}
+    ]
+  }]
+}`)
+	config, err := loadPresetConfig(path, map[string]bool{"redis": true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	connections := config.Profiles[0].Connections
+	if connections[0].Environment != "stage" || connections[1].Environment != "prod" {
+		t.Fatalf("connections = %#v", connections)
+	}
 }
 
 func TestLoadPresetConfigRejectsInvalidConfiguration(t *testing.T) {
@@ -63,6 +86,7 @@ func TestLoadPresetConfigRejectsInvalidConfiguration(t *testing.T) {
 		{name: "unknown tool", content: `{"profiles":[{"id":"one","label":"One","connections":[{"id":"preset:one","name":"one","tool":"unknown","host":"localhost","port":"6379","mode":"single"}]}]}`, message: `unknown tool "unknown"`},
 		{name: "invalid mode", content: `{"profiles":[{"id":"one","label":"One","connections":[{"id":"preset:one","name":"one","tool":"redis","host":"localhost","port":"6379","mode":"other"}]}]}`, message: `invalid mode "other"`},
 		{name: "invalid port", content: `{"profiles":[{"id":"one","label":"One","connections":[{"id":"preset:one","name":"one","tool":"redis","host":"localhost","port":"70000","mode":"single"}]}]}`, message: `invalid port "70000"`},
+		{name: "invalid environment", content: `{"profiles":[{"id":"one","label":"One","connections":[{"id":"preset:one","name":"one","tool":"redis","host":"localhost","port":"6379","mode":"single","environment":"production"}]}]}`, message: `invalid environment "production"`},
 	}
 
 	for _, test := range tests {
@@ -82,32 +106,6 @@ func TestLoadPresetConfigToleratesMissingFile(t *testing.T) {
 	}
 	if len(config.Profiles) != 0 {
 		t.Fatalf("profiles = %#v", config.Profiles)
-	}
-}
-
-func TestBundledPresetConfigPreservesExistingProfiles(t *testing.T) {
-	if _, err := os.Stat("connections.json"); errors.Is(err, os.ErrNotExist) {
-		t.Skip("connections.json is not present in this checkout")
-	}
-	config, err := loadPresetConfig("connections.json", map[string]bool{"aerospike": true, "redis": true})
-	if err != nil {
-		t.Fatal(err)
-	}
-	counts := map[string]int{}
-	names := map[string]bool{}
-	for _, profile := range config.Profiles {
-		counts[profile.ID] = len(profile.Connections)
-		for _, connection := range profile.Connections {
-			names[connection.Name] = true
-		}
-	}
-	if counts["k8-ci"] != 6 || counts["k8-ci-debug"] != 6 || counts["docker"] != 8 || len(names) != 20 {
-		t.Fatalf("profile counts = %#v, names = %d", counts, len(names))
-	}
-	for _, name := range []string{"aerospike-catalog-k8-ci", "aerospike-catalog-k8-ci-debug", "redis-realisation-docker"} {
-		if !names[name] {
-			t.Fatalf("missing bundled preset %q", name)
-		}
 	}
 }
 

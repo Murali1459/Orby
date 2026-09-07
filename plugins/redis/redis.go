@@ -1,6 +1,7 @@
 package redis
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"time"
@@ -25,7 +26,7 @@ func (Plugin) Metadata() plugins.Metadata {
 			{Kind: "input", Name: "query", Placeholder: "Enter Redis command", Grow: true},
 		}},
 		Fields:   []plugins.Field{{Label: "DB Index", Key: "dbIndex", Default: "0", InputType: "number"}},
-		Commands: redisCommands,
+		Commands: allRedisCommands,
 	}
 }
 
@@ -61,9 +62,19 @@ func (connection *connection) Run(request plugins.Request) (plugins.Result, erro
 
 func (connection *connection) Close() error { return connection.client.Close() }
 
+// writesAllowed reports whether request's environment permits write commands.
+// Anything other than an exact, server-resolved "stage" defaults to read-only.
+func writesAllowed(request queryRequest) bool {
+	return strings.EqualFold(strings.TrimSpace(request.Environment), "stage")
+}
+
 func runRedisWithClient(request queryRequest, client redisClient) (queryResult, error) {
+	ctx := request.Context
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	started := time.Now()
-	tokens, err := validateRedis(request.Query)
+	tokens, err := validateRedis(request.Query, writesAllowed(request))
 	if err != nil {
 		return queryResult{}, err
 	}
@@ -75,9 +86,9 @@ func runRedisWithClient(request queryRequest, client redisClient) (queryResult, 
 		return queryResult{}, fmt.Errorf("unsupported Redis format %q", format)
 	}
 	if strings.EqualFold(tokens[0], "BROWSE") {
-		return runBrowse(client, request)
+		return runBrowse(ctx, client, request)
 	}
-	value, err := client.Execute(tokens)
+	value, err := client.Execute(ctx, tokens)
 	if err != nil {
 		return queryResult{}, err
 	}

@@ -2,6 +2,7 @@ package plugins
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"strconv"
@@ -84,6 +85,10 @@ type Option struct {
 }
 
 type Request struct {
+	// Context, when non-nil, is canceled when the client aborts the query
+	// (cancel button or dropped connection). Plugins should use it to stop
+	// long-running operations; nil means "no cancellation requested".
+	Context        context.Context
 	Query          string
 	Format         string
 	ConnectionID   string
@@ -92,7 +97,14 @@ type Request struct {
 	Host           string
 	Port           string
 	Mode           string
-	Fields         map[string]string
+	// Environment is "prod" or "stage", resolved authoritatively by the
+	// server before a plugin ever sees it: for a preset connection it comes
+	// from the server's own connections.json (a client cannot override it by
+	// forging the form field), and only an ad-hoc connection's own client
+	// input is trusted. Plugins should treat anything other than "stage" as
+	// "prod" and reject writes accordingly.
+	Environment string
+	Fields      map[string]string
 }
 
 type BrowseKey struct {

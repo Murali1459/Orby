@@ -91,6 +91,124 @@ var redisReadCommands = func() map[string]bool {
 	return set
 }()
 
+// redisWriteCommands is autocomplete metadata only, for commands a Stage
+// connection may run (see writesAllowed): it does NOT feed redisReadCommands,
+// so it can never widen the Prod allow-list above. Generated once from
+// redis-doc's commands.json (https://github.com/redis/redis-doc, MIT
+// licensed) by filtering to commands whose command_flags contains "write";
+// container-only entries (e.g. "ACL CAT") are skipped since validateRedis
+// only inspects the first token. Regenerate by re-running that filter if a
+// newer Redis adds write commands worth surfacing.
+var redisWriteCommands = []plugins.Command{
+	{Name: "APPEND", Args: []string{"key", "value"}},
+	{Name: "BITFIELD", Args: []string{"key", "[GET get-block|write]", "…"}},
+	{Name: "BITOP", Args: []string{"AND|OR|XOR|NOT", "destkey", "key", "…"}},
+	{Name: "BLMOVE", Args: []string{"source", "destination", "LEFT|RIGHT", "LEFT|RIGHT", "timeout"}},
+	{Name: "BLMPOP", Args: []string{"timeout", "numkeys", "key", "…", "LEFT|RIGHT", "[COUNT count]"}},
+	{Name: "BLPOP", Args: []string{"key", "…", "timeout"}},
+	{Name: "BRPOP", Args: []string{"key", "…", "timeout"}},
+	{Name: "BRPOPLPUSH", Args: []string{"source", "destination", "timeout"}},
+	{Name: "BZMPOP", Args: []string{"timeout", "numkeys", "key", "…", "MIN|MAX", "[COUNT count]"}},
+	{Name: "BZPOPMAX", Args: []string{"key", "…", "timeout"}},
+	{Name: "BZPOPMIN", Args: []string{"key", "…", "timeout"}},
+	{Name: "COPY", Args: []string{"source", "destination", "[DB destination-db]", "[REPLACE]"}},
+	{Name: "DECR", Args: []string{"key"}},
+	{Name: "DECRBY", Args: []string{"key", "decrement"}},
+	{Name: "DEL", Args: []string{"key", "…"}},
+	{Name: "EXPIRE", Args: []string{"key", "seconds", "[NX|XX|GT|LT]"}},
+	{Name: "EXPIREAT", Args: []string{"key", "unix-time-seconds", "[NX|XX|GT|LT]"}},
+	{Name: "FLUSHALL", Args: []string{"[ASYNC|SYNC]"}},
+	{Name: "FLUSHDB", Args: []string{"[ASYNC|SYNC]"}},
+	{Name: "GEOADD", Args: []string{"key", "[NX|XX]", "[CH]", "longitude latitude member", "…"}},
+	{Name: "GEOSEARCHSTORE", Args: []string{"destination", "source", "FROMMEMBER member|FROMLONLAT fromlonlat", "circle|box", "[ASC|DESC]", "[COUNT count ANY]", "[STOREDIST]"}},
+	{Name: "GETDEL", Args: []string{"key"}},
+	{Name: "GETEX", Args: []string{"key", "[EX seconds|PX milliseconds|EXAT unix-time-seconds|PXAT unix-time-milliseconds|PERSIST]"}},
+	{Name: "GETSET", Args: []string{"key", "value"}},
+	{Name: "HDEL", Args: []string{"key", "field", "…"}},
+	{Name: "HINCRBY", Args: []string{"key", "field", "increment"}},
+	{Name: "HINCRBYFLOAT", Args: []string{"key", "field", "increment"}},
+	{Name: "HMSET", Args: []string{"key", "field value", "…"}},
+	{Name: "HSET", Args: []string{"key", "field value", "…"}},
+	{Name: "HSETNX", Args: []string{"key", "field", "value"}},
+	{Name: "INCR", Args: []string{"key"}},
+	{Name: "INCRBY", Args: []string{"key", "increment"}},
+	{Name: "INCRBYFLOAT", Args: []string{"key", "increment"}},
+	{Name: "LINSERT", Args: []string{"key", "BEFORE|AFTER", "pivot", "element"}},
+	{Name: "LMOVE", Args: []string{"source", "destination", "LEFT|RIGHT", "LEFT|RIGHT"}},
+	{Name: "LMPOP", Args: []string{"numkeys", "key", "…", "LEFT|RIGHT", "[COUNT count]"}},
+	{Name: "LPOP", Args: []string{"key", "[count]"}},
+	{Name: "LPUSH", Args: []string{"key", "element", "…"}},
+	{Name: "LPUSHX", Args: []string{"key", "element", "…"}},
+	{Name: "LREM", Args: []string{"key", "count", "element"}},
+	{Name: "LSET", Args: []string{"key", "index", "element"}},
+	{Name: "LTRIM", Args: []string{"key", "start", "stop"}},
+	{Name: "MIGRATE", Args: []string{"host", "port", "key|EMPTY-STRING", "destination-db", "timeout", "[COPY]", "[REPLACE]", "[AUTH password|AUTH2 auth2]", "[KEYS key]", "…"}},
+	{Name: "MOVE", Args: []string{"key", "db"}},
+	{Name: "MSET", Args: []string{"key value", "…"}},
+	{Name: "MSETNX", Args: []string{"key value", "…"}},
+	{Name: "PERSIST", Args: []string{"key"}},
+	{Name: "PEXPIRE", Args: []string{"key", "milliseconds", "[NX|XX|GT|LT]"}},
+	{Name: "PEXPIREAT", Args: []string{"key", "unix-time-milliseconds", "[NX|XX|GT|LT]"}},
+	{Name: "PFADD", Args: []string{"key", "[element]", "…"}},
+	{Name: "PFMERGE", Args: []string{"destkey", "[sourcekey]", "…"}},
+	{Name: "PSETEX", Args: []string{"key", "milliseconds", "value"}},
+	{Name: "RENAME", Args: []string{"key", "newkey"}},
+	{Name: "RENAMENX", Args: []string{"key", "newkey"}},
+	{Name: "RESTORE", Args: []string{"key", "ttl", "serialized-value", "[REPLACE]", "[ABSTTL]", "[IDLETIME seconds]", "[FREQ frequency]"}},
+	{Name: "RPOP", Args: []string{"key", "[count]"}},
+	{Name: "RPOPLPUSH", Args: []string{"source", "destination"}},
+	{Name: "RPUSH", Args: []string{"key", "element", "…"}},
+	{Name: "RPUSHX", Args: []string{"key", "element", "…"}},
+	{Name: "SADD", Args: []string{"key", "member", "…"}},
+	{Name: "SDIFFSTORE", Args: []string{"destination", "key", "…"}},
+	{Name: "SET", Args: []string{"key", "value", "[NX|XX]", "[GET]", "[EX seconds|PX milliseconds|EXAT unix-time-seconds|PXAT unix-time-milliseconds|KEEPTTL]"}},
+	{Name: "SETBIT", Args: []string{"key", "offset", "value"}},
+	{Name: "SETEX", Args: []string{"key", "seconds", "value"}},
+	{Name: "SETNX", Args: []string{"key", "value"}},
+	{Name: "SETRANGE", Args: []string{"key", "offset", "value"}},
+	{Name: "SINTERSTORE", Args: []string{"destination", "key", "…"}},
+	{Name: "SMOVE", Args: []string{"source", "destination", "member"}},
+	{Name: "SORT", Args: []string{"key", "[BY pattern]", "[offset count]", "[GET pattern]", "…", "[ASC|DESC]", "[ALPHA]", "[STORE destination]"}},
+	{Name: "SPOP", Args: []string{"key", "[count]"}},
+	{Name: "SREM", Args: []string{"key", "member", "…"}},
+	{Name: "SUNIONSTORE", Args: []string{"destination", "key", "…"}},
+	{Name: "SWAPDB", Args: []string{"index1", "index2"}},
+	{Name: "UNLINK", Args: []string{"key", "…"}},
+	{Name: "XACK", Args: []string{"key", "group", "id", "…"}},
+	{Name: "XADD", Args: []string{"key", "[NOMKSTREAM]", "[strategy operator threshold LIMIT count]", "*|id", "field value", "…"}},
+	{Name: "XAUTOCLAIM", Args: []string{"key", "group", "consumer", "min-idle-time", "start", "[COUNT count]", "[JUSTID]"}},
+	{Name: "XCLAIM", Args: []string{"key", "group", "consumer", "min-idle-time", "id", "…", "[IDLE ms]", "[TIME unix-time-milliseconds]", "[RETRYCOUNT count]", "[FORCE]", "[JUSTID]", "[LASTID lastid]"}},
+	{Name: "XDEL", Args: []string{"key", "id", "…"}},
+	{Name: "XREADGROUP", Args: []string{"group consumer", "[COUNT count]", "[BLOCK milliseconds]", "[NOACK]", "key id"}},
+	{Name: "XSETID", Args: []string{"key", "last-id", "[ENTRIESADDED entries-added]", "[MAXDELETEDID max-deleted-id]"}},
+	{Name: "XTRIM", Args: []string{"key", "strategy operator threshold LIMIT count"}},
+	{Name: "ZADD", Args: []string{"key", "[NX|XX]", "[GT|LT]", "[CH]", "[INCR]", "score member", "…"}},
+	{Name: "ZDIFFSTORE", Args: []string{"destination", "numkeys", "key", "…"}},
+	{Name: "ZINCRBY", Args: []string{"key", "increment", "member"}},
+	{Name: "ZINTERSTORE", Args: []string{"destination", "numkeys", "key", "…", "[WEIGHTS weight]", "…", "[SUM|MIN|MAX]"}},
+	{Name: "ZMPOP", Args: []string{"numkeys", "key", "…", "MIN|MAX", "[COUNT count]"}},
+	{Name: "ZPOPMAX", Args: []string{"key", "[count]"}},
+	{Name: "ZPOPMIN", Args: []string{"key", "[count]"}},
+	{Name: "ZRANGESTORE", Args: []string{"dst", "src", "min", "max", "[BYSCORE|BYLEX]", "[REV]", "[offset count]"}},
+	{Name: "ZREM", Args: []string{"key", "member", "…"}},
+	{Name: "ZREMRANGEBYLEX", Args: []string{"key", "min", "max"}},
+	{Name: "ZREMRANGEBYRANK", Args: []string{"key", "start", "stop"}},
+	{Name: "ZREMRANGEBYSCORE", Args: []string{"key", "min", "max"}},
+	{Name: "ZUNIONSTORE", Args: []string{"destination", "numkeys", "key", "…", "[WEIGHTS weight]", "…", "[SUM|MIN|MAX]"}},
+}
+
+// allRedisCommands is the full autocomplete surface: read commands (always
+// safe) plus write commands (only actually executable on a Stage connection;
+// see writesAllowed). Metadata is static and connection-agnostic, so a Prod
+// connection's composer still shows write suggestions — attempting one just
+// surfaces the usual "read-only mode rejected" error.
+var allRedisCommands = func() []plugins.Command {
+	all := make([]plugins.Command, 0, len(redisCommands)+len(redisWriteCommands))
+	all = append(all, redisCommands...)
+	all = append(all, redisWriteCommands...)
+	return all
+}()
+
 func tokenizeRedis(source string) ([]string, error) {
 	tokens := []string{}
 	var token strings.Builder
@@ -140,13 +258,18 @@ func tokenizeRedis(source string) ([]string, error) {
 	return tokens, nil
 }
 
-func validateRedis(query string) ([]string, error) {
+// validateRedis tokenizes query and, unless allowWrites is set (a Stage
+// connection), rejects any command outside the read-only allow-list.
+func validateRedis(query string, allowWrites bool) ([]string, error) {
 	tokens, err := tokenizeRedis(query)
 	if err != nil {
 		return nil, err
 	}
 	if len(tokens) == 0 {
 		return nil, fmt.Errorf("redis command cannot be empty")
+	}
+	if allowWrites {
+		return tokens, nil
 	}
 	command := strings.ToUpper(tokens[0])
 	if !redisReadCommands[command] {

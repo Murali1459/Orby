@@ -1,6 +1,7 @@
 package redis
 
 import (
+	"context"
 	"fmt"
 	"sort"
 	"strconv"
@@ -88,7 +89,7 @@ func browsePrefix(key string) string {
 	return "(other)"
 }
 
-func runBrowse(client redisClient, request queryRequest) (queryResult, error) {
+func runBrowse(ctx context.Context, client redisClient, request queryRequest) (queryResult, error) {
 	pattern, limit, err := parseBrowse(request.Query)
 	if err != nil {
 		return queryResult{}, err
@@ -98,14 +99,14 @@ func runBrowse(client redisClient, request queryRequest) (queryResult, error) {
 	var scanned []string
 	var limited bool
 	if cluster {
-		scanned, limited, err = client.ScanCluster(pattern, browseBatchSize, limit)
+		scanned, limited, err = client.ScanCluster(ctx, pattern, browseBatchSize, limit)
 	} else {
-		scanned, limited, err = scanKeys(client, pattern, limit)
+		scanned, limited, err = scanKeys(ctx, client, pattern, limit)
 	}
 	if err != nil {
 		return queryResult{}, err
 	}
-	groups, err := browseGroups(scanned, client)
+	groups, err := browseGroups(ctx, scanned, client)
 	if err != nil {
 		return queryResult{}, err
 	}
@@ -119,13 +120,16 @@ func runBrowse(client redisClient, request queryRequest) (queryResult, error) {
 }
 
 // scanKeys walks a single host's keyspace with cursor-based SCAN pages.
-func scanKeys(client redisClient, pattern string, limit int) ([]string, bool, error) {
+func scanKeys(ctx context.Context, client redisClient, pattern string, limit int) ([]string, bool, error) {
 	scanned := []string{}
 	seen := map[string]struct{}{}
 	limited := false
 	cursor := "0"
 	for len(scanned) < limit {
-		keys, next, scanErr := client.Scan(cursor, pattern, browseBatchSize)
+		if err := ctx.Err(); err != nil {
+			return nil, false, err
+		}
+		keys, next, scanErr := client.Scan(ctx, cursor, pattern, browseBatchSize)
 		if scanErr != nil {
 			return nil, false, scanErr
 		}
@@ -153,7 +157,7 @@ func scanKeys(client redisClient, pattern string, limit int) ([]string, bool, er
 
 // browseGroups groups scanned keys by prefix and enriches the displayed subset
 // with pipelined TYPE/TTL lookups (two round trips total).
-func browseGroups(scanned []string, client redisClient) ([]plugins.BrowseGroup, error) {
+func browseGroups(ctx context.Context, scanned []string, client redisClient) ([]plugins.BrowseGroup, error) {
 	grouped := map[string][]string{}
 	for _, key := range scanned {
 		prefix := browsePrefix(key)
@@ -181,11 +185,11 @@ func browseGroups(scanned []string, client redisClient) ([]plugins.BrowseGroup, 
 	if len(shown) == 0 {
 		return groups, nil
 	}
-	types, err := client.Types(shown)
+	types, err := client.Types(ctx, shown)
 	if err != nil {
 		return nil, err
 	}
-	ttls, err := client.TTLs(shown)
+	ttls, err := client.TTLs(ctx, shown)
 	if err != nil {
 		return nil, err
 	}

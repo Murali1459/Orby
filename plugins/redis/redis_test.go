@@ -1,6 +1,7 @@
 package redis
 
 import (
+	"context"
 	"errors"
 	"reflect"
 	"strconv"
@@ -24,7 +25,7 @@ type fakeRedis struct {
 }
 
 func runRedis(request queryRequest) (queryResult, error) {
-	if _, err := validateRedis(request.Query); err != nil {
+	if _, err := validateRedis(request.Query, writesAllowed(request)); err != nil {
 		return queryResult{}, err
 	}
 	connection, err := (Plugin{}).Connect(request)
@@ -54,24 +55,28 @@ func TestMetadataProvidesComposer(t *testing.T) {
 }
 
 func redisCommandNames() []string {
-	names := make([]string, len(redisCommands))
-	for index, command := range redisCommands {
+	names := make([]string, len(allRedisCommands))
+	for index, command := range allRedisCommands {
 		names[index] = command.Name
 	}
 	return names
 }
 
+// TestMetadataCommandsMatchAllowList checks the read-only subset of metadata
+// commands: every entry in redisCommands (the curated read list, which alone
+// backs redisReadCommands) must be allow-listed and vice versa. Write-only
+// entries live in the separate redisWriteCommands and must never leak into
+// redisReadCommands, or a Prod connection could execute them.
 func TestMetadataCommandsMatchAllowList(t *testing.T) {
-	commands := Plugin{}.Metadata().Commands
 	allowed := redisReadCommands
-	for _, command := range commands {
+	for _, command := range redisCommands {
 		if !allowed[command.Name] {
 			t.Fatalf("metadata command %q is not in the execution allow-list", command.Name)
 		}
 	}
 	for name := range allowed {
 		matched := false
-		for _, command := range commands {
+		for _, command := range redisCommands {
 			if command.Name == name {
 				matched = true
 				break
@@ -83,14 +88,49 @@ func TestMetadataCommandsMatchAllowList(t *testing.T) {
 	}
 }
 
-func (client *fakeRedis) Execute(tokens []string) (any, error) {
+func TestWriteCommandsAreNeverInTheReadOnlyAllowList(t *testing.T) {
+	for _, command := range redisWriteCommands {
+		if redisReadCommands[command.Name] {
+			t.Fatalf("write-only command %q must not be in the read-only allow-list", command.Name)
+		}
+	}
+}
+
+func TestMetadataCommandsHaveNoDuplicatesAndCoverBothLists(t *testing.T) {
+	commands := Plugin{}.Metadata().Commands
+	seen := map[string]bool{}
+	for _, command := range commands {
+		if seen[command.Name] {
+			t.Fatalf("duplicate metadata command %q", command.Name)
+		}
+		seen[command.Name] = true
+	}
+	for _, command := range redisCommands {
+		if !seen[command.Name] {
+			t.Fatalf("read command %q missing from metadata", command.Name)
+		}
+	}
+	for _, command := range redisWriteCommands {
+		if !seen[command.Name] {
+			t.Fatalf("write command %q missing from metadata", command.Name)
+		}
+	}
+}
+
+func (client *fakeRedis) Execute(ctx context.Context, tokens []string) (any, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	client.calls = append(client.calls, strings.Join(tokens, " "))
 	return client.value, client.err
 }
 func (client *fakeRedis) Ping() error  { client.pings++; return client.err }
 func (client *fakeRedis) Close() error { client.closed = true; return nil }
 
-func (client *fakeRedis) Scan(cursor string, pattern string, count int64) ([]string, string, error) {
+func (client *fakeRedis) Scan(ctx context.Context, cursor string, pattern string, count int64) ([]string, string, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, "", err
+	}
 	client.calls = append(client.calls, "SCAN "+cursor+" MATCH "+pattern+" COUNT "+strconv.FormatInt(count, 10))
 	if client.err != nil {
 		return nil, "", client.err
@@ -107,7 +147,10 @@ func (client *fakeRedis) Scan(cursor string, pattern string, count int64) ([]str
 	return client.scanPages[page], next, nil
 }
 
-func (client *fakeRedis) ScanCluster(pattern string, count int64, limit int) ([]string, bool, error) {
+func (client *fakeRedis) ScanCluster(ctx context.Context, pattern string, count int64, limit int) ([]string, bool, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, false, err
+	}
 	client.calls = append(client.calls, "CLUSTER SCAN MATCH "+pattern+" COUNT "+strconv.FormatInt(count, 10))
 	if client.err != nil {
 		return nil, false, client.err
@@ -129,7 +172,10 @@ func (client *fakeRedis) ScanCluster(pattern string, count int64, limit int) ([]
 	return keys, false, nil
 }
 
-func (client *fakeRedis) Types(keys []string) ([]string, error) {
+func (client *fakeRedis) Types(ctx context.Context, keys []string) ([]string, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	types := make([]string, len(keys))
 	for index, key := range keys {
 		types[index] = client.typesByKey[key]
@@ -137,7 +183,10 @@ func (client *fakeRedis) Types(keys []string) ([]string, error) {
 	return types, nil
 }
 
-func (client *fakeRedis) TTLs(keys []string) ([]int64, error) {
+func (client *fakeRedis) TTLs(ctx context.Context, keys []string) ([]int64, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	ttls := make([]int64, len(keys))
 	for index, key := range keys {
 		ttls[index] = client.ttlsByKey[key]
@@ -324,6 +373,38 @@ func TestRunRedisRejectsAndSanitizes(t *testing.T) {
 	_, err := runRedis(queryRequest{Query: "GET key", Host: "node", Port: "6379"})
 	if !errors.Is(err, client.err) || !client.closed {
 		t.Fatalf("err=%v closed=%v", err, client.closed)
+	}
+}
+
+func TestRunRedisAllowsWritesOnlyInStageEnvironment(t *testing.T) {
+	original := redisClientFactory
+	defer func() { redisClientFactory = original }()
+	client := &fakeRedis{}
+	redisClientFactory = func(bool, []address, int) (redisClient, error) { return client, nil }
+
+	for _, environment := range []string{"", "prod", "PROD", "unknown"} {
+		if _, err := runRedis(queryRequest{Query: "SET key value", Host: "node", Port: "6379", Environment: environment}); err == nil {
+			t.Fatalf("environment %q: write reached client", environment)
+		}
+	}
+	for _, environment := range []string{"stage", "Stage", "STAGE", " stage "} {
+		client.calls = nil
+		if _, err := runRedis(queryRequest{Query: "SET key value", Host: "node", Port: "6379", Environment: environment}); err != nil {
+			t.Fatalf("environment %q: write rejected: %v", environment, err)
+		}
+	}
+}
+
+func TestRunRedisAbortsOnCancelledContext(t *testing.T) {
+	original := redisClientFactory
+	defer func() { redisClientFactory = original }()
+	client := &fakeRedis{}
+	redisClientFactory = func(bool, []address, int) (redisClient, error) { return client, nil }
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err := runRedis(queryRequest{Query: "GET key", Host: "node", Port: "6379", Context: ctx})
+	if !errors.Is(err, context.Canceled) || len(client.calls) != 0 {
+		t.Fatalf("err=%v calls=%v", err, client.calls)
 	}
 }
 

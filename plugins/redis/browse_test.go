@@ -1,6 +1,7 @@
 package redis
 
 import (
+	"context"
 	"reflect"
 	"strings"
 	"testing"
@@ -194,7 +195,7 @@ type stalledCursorRedis struct {
 	fakeRedis
 }
 
-func (client *stalledCursorRedis) Scan(string, string, int64) ([]string, string, error) {
+func (client *stalledCursorRedis) Scan(ctx context.Context, cursor string, pattern string, count int64) ([]string, string, error) {
 	client.calls = append(client.calls, "SCAN STALLED")
 	return []string{"a:1"}, "7", nil
 }

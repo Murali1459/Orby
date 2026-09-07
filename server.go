@@ -1,7 +1,9 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"html/template"
 	"net/http"
@@ -142,12 +144,13 @@ func (server *server) query(writer http.ResponseWriter, request *http.Request) {
 	toolName := request.Form.Get("tool")
 	tool, known := server.metadataFor(toolName)
 	query := requestFromValues(request.Form)
+	query.Environment = server.resolveEnvironment(query)
 	if !known {
 		server.writeQueryError(writer, tool, query, fmt.Sprintf("unknown plugin %q", toolName))
 		return
 	}
 	plugin := server.plugins[toolName]
-	key, err := connectionKey(toolName, query.Host, query.Port)
+	key, err := connectionKey(toolName, query)
 	if err != nil {
 		server.writeQueryError(writer, tool, query, err.Error())
 		return
@@ -158,12 +161,43 @@ func (server *server) query(writer http.ResponseWriter, request *http.Request) {
 		return
 	}
 	defer release()
+	// A browser abort cancels request.Context(), which is the Cancel control: the
+	// UI aborts the query request, and net/http cancels the plugin's Run context.
+	ctx, cancel := context.WithCancel(request.Context())
+	query.Context = ctx
+	defer cancel()
 	result, err := connection.Run(query)
 	if err != nil {
+		if errors.Is(err, context.Canceled) {
+			server.writeCancelled(writer, tool, query, "Query cancelled")
+			return
+		}
 		server.writeQueryError(writer, tool, query, err.Error())
 		return
 	}
 	server.writeQueryResult(writer, tool, query, result, "success")
+}
+
+// resolveEnvironment is the sole authority on whether writes are allowed: for
+// a preset connection it returns connections.json's own declared value,
+// ignoring whatever the browser submitted, so a forged "environment=stage"
+// form field can never escalate a preset the operator configured as prod. An
+// ad-hoc (non-preset) connection has no server-side record to defer to, so
+// the client's own input is trusted (normalized, defaulting to "prod").
+func (server *server) resolveEnvironment(query queryRequest) string {
+	if isPresetConnectionID(query.ConnectionID) {
+		if preset, ok := server.presets.connectionByID(query.ConnectionID); ok {
+			return preset.Environment
+		}
+		return "prod"
+	}
+	return normalizeEnvironment(query.Environment)
+}
+
+func (server *server) writeCancelled(writer http.ResponseWriter, tool toolMetadata, request queryRequest, message string) {
+	server.writeQueryResult(writer, tool, request, queryResult{
+		Tool: tool.Name, Query: request.Query, Format: request.Format, Profile: request.ConnectionName, Error: message,
+	}, "cancelled")
 }
 
 func (server *server) writeQueryError(writer http.ResponseWriter, tool toolMetadata, request queryRequest, message string) {
