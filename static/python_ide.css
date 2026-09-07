@@ -313,7 +313,7 @@ kbd { min-width: 22px; height: 22px; display: inline-grid; place-items: center; 
 }
 
 .python-login-static-art {
-  background: var(--bg) url('/static/brand/orbital-command-field-clean.png') center / cover no-repeat fixed;
+  background: var(--bg) url('/static/brand/orbital-command-field-clean.webp') center / cover no-repeat fixed;
 }
 
 .python-login-card {
