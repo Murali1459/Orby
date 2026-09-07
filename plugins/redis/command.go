@@ -14,6 +14,8 @@ import (
 var redisCommands = []plugins.Command{
 	{Name: "BROWSE", Args: []string{"pattern", "[LIMIT n]"}},
 	{Name: "GET", Args: []string{"key"}},
+	{Name: "JSON.GET", Args: []string{"key", "[path …]"}},
+	{Name: "JSON.TYPE", Args: []string{"key", "[path]"}},
 	{Name: "MGET", Args: []string{"key", "…"}},
 	{Name: "GETRANGE", Args: []string{"key", "start", "end"}},
 	{Name: "GETBIT", Args: []string{"key", "offset"}},
@@ -133,6 +135,7 @@ var redisWriteCommands = []plugins.Command{
 	{Name: "INCR", Args: []string{"key"}},
 	{Name: "INCRBY", Args: []string{"key", "increment"}},
 	{Name: "INCRBYFLOAT", Args: []string{"key", "increment"}},
+	{Name: "JSON.SET", Args: []string{"key", "path", "value", "[NX|XX]"}},
 	{Name: "LINSERT", Args: []string{"key", "BEFORE|AFTER", "pivot", "element"}},
 	{Name: "LMOVE", Args: []string{"source", "destination", "LEFT|RIGHT", "LEFT|RIGHT"}},
 	{Name: "LMPOP", Args: []string{"numkeys", "key", "…", "LEFT|RIGHT", "[COUNT count]"}},

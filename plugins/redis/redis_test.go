@@ -232,7 +232,7 @@ func TestRunRedisExecutesOnceWithoutRewriting(t *testing.T) {
 		return client, nil
 	}
 	result, err := runRedis(queryRequest{Query: "HGETALL people", Format: "raw", Host: "redis.internal", Port: "6380", Fields: map[string]string{"dbIndex": "0"}})
-	if err != nil || result.Raw != "name\nAda" || !reflect.DeepEqual(client.calls, []string{"HGETALL people"}) || !client.closed {
+	if err != nil || result.Raw != "1) \"name\"\n2) \"Ada\"" || !reflect.DeepEqual(client.calls, []string{"HGETALL people"}) || !client.closed {
 		t.Fatalf("result=%#v client=%#v err=%v", result, client, err)
 	}
 }
@@ -342,8 +342,57 @@ func TestRunRedisFormatsRawLikeRedisCLI(t *testing.T) {
 	redisClientFactory = func(bool, []address, int) (redisClient, error) { return client, nil }
 
 	result, err := runRedis(queryRequest{Query: "MGET first second", Format: "raw", Host: "node", Port: "6379"})
-	if err != nil || !result.IsRaw || result.Raw != "first\nsecond\n3" {
+	if err != nil || !result.IsRaw || result.Raw != "1) \"first\"\n2) 1) \"second\"\n   2) 3" {
 		t.Fatalf("result=%#v err=%v", result, err)
+	}
+}
+
+func TestRedisRawFormatsArbitraryMapTypes(t *testing.T) {
+	tests := []struct {
+		name  string
+		value any
+		want  string
+	}{
+		{
+			name:  "typed string map",
+			value: map[string]string{"name": "Ada", "age": "36"},
+			want:  "1) 1) \"age\"\n   2) \"36\"\n2) 1) \"name\"\n   2) \"Ada\"",
+		},
+		{
+			name: "nested interface map",
+			value: map[any]any{
+				2:         []byte("two"),
+				"profile": map[string]string{"role": "admin", "name": "Ada"},
+			},
+			want: "1) 1) 2\n   2) \"two\"\n2) 1) \"profile\"\n   2) 1) 1) \"name\"\n         2) \"Ada\"\n      2) 1) \"role\"\n         2) \"admin\"",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := redisRaw(test.value); got != test.want {
+				t.Fatalf("redisRaw() = %q, want %q", got, test.want)
+			}
+		})
+	}
+}
+
+func TestRedisRawPreservesXReadHierarchy(t *testing.T) {
+	value := map[any]any{
+		"adventure:ad_updates": []any{
+			[]any{
+				[]byte("1788804302064-0"),
+				[]any{[]byte("action"), []byte("create"), []byte("data"), []byte(`{"title":"Created"}`)},
+			},
+		},
+	}
+	want := "1) 1) \"adventure:ad_updates\"\n" +
+		"   2) 1) 1) \"1788804302064-0\"\n" +
+		"         2) 1) \"action\"\n" +
+		"            2) \"create\"\n" +
+		"            3) \"data\"\n" +
+		"            4) \"{\\\"title\\\":\\\"Created\\\"}\""
+	if got := redisRaw(value); got != want {
+		t.Fatalf("redisRaw() =\n%s\nwant:\n%s", got, want)
 	}
 }
 
@@ -392,6 +441,21 @@ func TestRunRedisAllowsWritesOnlyInStageEnvironment(t *testing.T) {
 		if _, err := runRedis(queryRequest{Query: "SET key value", Host: "node", Port: "6379", Environment: environment}); err != nil {
 			t.Fatalf("environment %q: write rejected: %v", environment, err)
 		}
+	}
+}
+
+func TestRedisJSONCommandPolicy(t *testing.T) {
+	if _, err := validateRedis("JSON.GET document $", false); err != nil {
+		t.Fatalf("JSON.GET rejected in read-only mode: %v", err)
+	}
+	query := `JSON.SET document $ '{"name":"Ada","active":true}'`
+	if _, err := validateRedis(query, false); err == nil {
+		t.Fatal("JSON.SET was allowed in read-only mode")
+	}
+	tokens, err := validateRedis(query, true)
+	want := []string{"JSON.SET", "document", "$", `{"name":"Ada","active":true}`}
+	if err != nil || !reflect.DeepEqual(tokens, want) {
+		t.Fatalf("tokens=%q err=%v, want %q", tokens, err, want)
 	}
 }
 
